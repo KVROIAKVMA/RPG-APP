@@ -28,6 +28,7 @@ class VTTWindow(QMainWindow):
         self.add_tab("Historial")
         self.add_tab("Agenda")
         self.add_tab("Audio")
+        self.add_tab("Voz")
 
     def add_tab(self, nombre):
         from PyQt5.QtWidgets import QVBoxLayout
@@ -304,6 +305,11 @@ class VTTWindow(QMainWindow):
                             for ev in self.events_by_date.get(date, []):
                                 self.event_list.addItem(ev)
                         refresh_events()
+                if 'agenda_audio' in data and hasattr(self, 'event_audio_by_date'):
+                    self.event_audio_by_date = data['agenda_audio']
+                # Voz/Discord
+                if 'discord_url' in data:
+                    self._discord_url_cache = data['discord_url']
                 # Plantillas
                 if 'plantillas' in data and hasattr(self, 'template_list'):
                     self.template_list.clear()
@@ -1102,16 +1108,22 @@ class VTTWindow(QMainWindow):
             self.calendar = QCalendarWidget()
             self.event_list = QListWidget()
             self.events_by_date = {}  # {QDate.toString(): [str, ...]}
-            def refresh_events():
-                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
-                self.event_list.clear()
-                for ev in self.events_by_date.get(date, []):
-                    self.event_list.addItem(ev)
+            self.event_audio_by_date = {}  # {date: [audio_path or None, ...]}
+            btn_play_event_audio = QPushButton("Reproducir audio del evento")
+            btn_play_event_audio.setEnabled(False)
             def add_event():
                 text, ok = QInputDialog.getText(tab, "Nuevo Evento", "Descripción del evento:")
                 if ok and text.strip():
                     date = self.calendar.selectedDate().toString("yyyy-MM-dd")
                     self.events_by_date.setdefault(date, []).append(text.strip())
+                    # Pregunta si quiere asociar audio
+                    audio_path = None
+                    resp = QMessageBox.question(tab, "¿Asociar audio?", "¿Quieres asociar un audio a este evento?", QMessageBox.Yes | QMessageBox.No)
+                    if resp == QMessageBox.Yes:
+                        files, _ = QFileDialog.getOpenFileNames(tab, "Selecciona archivo de audio", "", "Audio (*.wav)")
+                        if files:
+                            audio_path = files[0]
+                    self.event_audio_by_date.setdefault(date, []).append(audio_path)
                     refresh_events()
             def edit_event():
                 row = self.event_list.currentRow()
@@ -1122,6 +1134,16 @@ class VTTWindow(QMainWindow):
                 text, ok = QInputDialog.getText(tab, "Editar Evento", "Descripción:", text=old)
                 if ok and text.strip():
                     self.events_by_date[date][row] = text.strip()
+                    # Permite cambiar audio asociado
+                    audio_path = self.event_audio_by_date.get(date, [None]*len(self.events_by_date[date]))[row]
+                    resp = QMessageBox.question(tab, "¿Cambiar audio?", "¿Quieres cambiar el audio asociado?", QMessageBox.Yes | QMessageBox.No)
+                    if resp == QMessageBox.Yes:
+                        files, _ = QFileDialog.getOpenFileNames(tab, "Selecciona archivo de audio", "", "Audio (*.wav)")
+                        if files:
+                            audio_path = files[0]
+                        else:
+                            audio_path = None
+                        self.event_audio_by_date[date][row] = audio_path
                     refresh_events()
             def del_event():
                 row = self.event_list.currentRow()
@@ -1129,6 +1151,10 @@ class VTTWindow(QMainWindow):
                     return
                 date = self.calendar.selectedDate().toString("yyyy-MM-dd")
                 del self.events_by_date[date][row]
+                if date in self.event_audio_by_date and len(self.event_audio_by_date[date]) > row:
+                    del self.event_audio_by_date[date][row]
+                    if not self.event_audio_by_date[date]:
+                        del self.event_audio_by_date[date]
                 if not self.events_by_date[date]:
                     del self.events_by_date[date]
                 refresh_events()
@@ -1166,20 +1192,65 @@ class VTTWindow(QMainWindow):
                     if date.isValid():
                         self.calendar.setDateTextFormat(date, fmt_event)
 
+            self._agenda_reminder_dates = set()
             def refresh_events():
                 date = self.calendar.selectedDate().toString("yyyy-MM-dd")
                 self.event_list.clear()
-                for ev in self.events_by_date.get(date, []):
-                    self.event_list.addItem("📅 " + ev)
+                audios = self.event_audio_by_date.get(date, [])
+                for idx, ev in enumerate(self.events_by_date.get(date, [])):
+                    label = "📅 " + ev
+                    if idx < len(audios) and audios[idx]:
+                        label += " 🎵"
+                    self.event_list.addItem(label)
                 highlight_event_days()
-                # Aviso en chat si hay eventos
-                if hasattr(self, 'chat_list') and self.events_by_date.get(date):
-                    self.chat_list.addItem(f"📅 Eventos para {date}: " + ", ".join(self.events_by_date[date]))
+                # Recordatorio automático en chat solo una vez por fecha/sesión
+                if hasattr(self, 'chat_list') and self.events_by_date.get(date) and date not in self._agenda_reminder_dates:
+                    msg = f"📅 Recordatorio: eventos para {date}: " + ", ".join(self.events_by_date[date])
+                    if any(audios):
+                        msg += " (con audio)"
+                    self.chat_list.addItem(msg)
+                    self._agenda_reminder_dates.add(date)
+                btn_play_event_audio.setEnabled(False)
 
+            def on_event_selected():
+                row = self.event_list.currentRow()
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                audios = self.event_audio_by_date.get(date, [])
+                if row >= 0 and row < len(audios) and audios[row]:
+                    btn_play_event_audio.setEnabled(True)
+                else:
+                    btn_play_event_audio.setEnabled(False)
+
+            def play_event_audio():
+                row = self.event_list.currentRow()
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                audios = self.event_audio_by_date.get(date, [])
+                if row >= 0 and row < len(audios) and audios[row]:
+                    try:
+                        import threading, sounddevice as sd, numpy as np, wave
+                        fname = audios[row]
+                        def _play():
+                            try:
+                                wf = wave.open(fname, 'rb')
+                                samplerate = wf.getframerate()
+                                data = wf.readframes(wf.getnframes())
+                                audio = np.frombuffer(data, dtype=np.int16)
+                                audio = audio.astype(np.float32) / 32768.0
+                                sd.play(audio, samplerate=samplerate)
+                                sd.wait()
+                            except Exception as e:
+                                QMessageBox.warning(tab, "Error audio", str(e))
+                        threading.Thread(target=_play, daemon=True).start()
+                    except Exception as e:
+                        QMessageBox.warning(tab, "Error audio", str(e))
+
+            self.event_list.currentRowChanged.connect(on_event_selected)
+            btn_play_event_audio.clicked.connect(play_event_audio)
             self.calendar.selectionChanged.connect(refresh_events)
             add_btn.clicked.connect(add_event)
             edit_btn.clicked.connect(edit_event)
             del_btn.clicked.connect(del_event)
+            vbox.addWidget(btn_play_event_audio)
             refresh_events()
         elif nombre == "Audio":
             from PyQt5.QtWidgets import QPushButton, QLabel, QSlider, QFileDialog, QListWidget, QHBoxLayout, QVBoxLayout
@@ -1264,9 +1335,41 @@ class VTTWindow(QMainWindow):
             btn_pause.clicked.connect(pause_audio)
             btn_stop.clicked.connect(stop_audio)
             self.audio_volume.valueChanged.connect(lambda v: None)
-        else:
-            from PyQt5.QtWidgets import QLabel
-            tab_layout.addWidget(QLabel(f"Aquí va el contenido de {nombre}"))
+        elif nombre == "Voz":
+            from PyQt5.QtWidgets import QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout, QMessageBox
+            import webbrowser
+            self.discord_url = ""
+            label = QLabel("Pega aquí la invitación/canal de Discord (https://discord.gg/... o https://discord.com/channels/...) :")
+            url_input = QLineEdit()
+            url_input.setPlaceholderText("URL de Discord")
+            btn_join = QPushButton("Unirse al canal de voz")
+            status = QLabel()
+            def update_status():
+                if url_input.text().strip():
+                    status.setText("🟢 Enlace configurado")
+                else:
+                    status.setText("🔴 Sin enlace")
+            def join_discord():
+                url = url_input.text().strip()
+                if url.startswith("http"):
+                    webbrowser.open(url)
+                else:
+                    QMessageBox.warning(tab, "URL inválida", "Por favor, pega una URL válida de Discord.")
+            def save_url():
+                self.discord_url = url_input.text().strip()
+                update_status()
+            url_input.textChanged.connect(save_url)
+            btn_join.clicked.connect(join_discord)
+            update_status()
+            vbox = QVBoxLayout()
+            vbox.addWidget(label)
+            vbox.addWidget(url_input)
+            vbox.addWidget(btn_join)
+            vbox.addWidget(status)
+            tab_layout.addLayout(vbox)
+            # Al cargar campaña, restaurar url
+            if hasattr(self, '_discord_url_cache'):
+                url_input.setText(self._discord_url_cache)
         tab.setLayout(tab_layout)
         self.tabs.addTab(tab, nombre)
 
