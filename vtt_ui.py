@@ -1,11 +1,157 @@
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QTextEdit, QLineEdit, QFileDialog, QHBoxLayout, QListWidget, QTabWidget, QListWidgetItem, QFormLayout, QSpinBox, QComboBox, QGroupBox, QScrollArea, QSlider
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont
-from PyQt5.QtCore import Qt, QRect, QPoint
-
-import json
-import threading
+from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QApplication, QLabel
+from PyQt5.QtCore import Qt
+import sys
 
 class VTTWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("VTT - Virtual Tabletop")
+        self.setGeometry(100, 100, 1100, 750)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        layout = QVBoxLayout()
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        self.central_widget.setLayout(layout)
+
+        # Tabs vacíos
+        self.add_tab("Mapa")
+        self.add_tab("Chat")
+        self.add_tab("Dados")
+        self.add_tab("Fichas")
+        self.add_tab("Iniciativa")
+        self.add_tab("Plantillas")
+        self.add_tab("Notas")
+        self.add_tab("Macros")
+        self.add_tab("Historial")
+
+    def add_tab(self, nombre):
+        tab = QWidget()
+        tab_layout = QVBoxLayout()
+        if nombre == "Mapa":
+            tab_layout.addWidget(QLabel("Aquí irá el mapa (imagen, grid, tokens, etc.)", alignment=Qt.AlignCenter))
+        elif nombre == "Chat":
+            from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout
+            self.chat_list = QListWidget()
+            chat_input_layout = QHBoxLayout()
+            self.chat_input = QLineEdit()
+            self.chat_send = QPushButton("Enviar")
+            chat_input_layout.addWidget(self.chat_input)
+            chat_input_layout.addWidget(self.chat_send)
+            tab_layout.addWidget(self.chat_list)
+            tab_layout.addLayout(chat_input_layout)
+            self.chat_send.clicked.connect(lambda: self.chat_list.addItem(self.chat_input.text()) or self.chat_input.clear())
+        elif nombre == "Dados":
+            from PyQt5.QtWidgets import QPushButton, QListWidget
+            self.dice_history = QListWidget()
+            dice_btn = QPushButton("Tirar D20")
+            dice_btn.clicked.connect(lambda: self.dice_history.addItem("Resultado: " + str(__import__('random').randint(1,20))))
+            tab_layout.addWidget(dice_btn)
+            tab_layout.addWidget(self.dice_history)
+        elif nombre == "Fichas":
+            from PyQt5.QtWidgets import QFormLayout, QLineEdit, QPushButton
+            form = QFormLayout()
+            self.char_name = QLineEdit()
+            self.char_class = QLineEdit()
+            self.char_level = QLineEdit()
+            form.addRow("Nombre", self.char_name)
+            form.addRow("Clase", self.char_class)
+            form.addRow("Nivel", self.char_level)
+            tab_layout.addLayout(form)
+        elif nombre == "Iniciativa":
+            from PyQt5.QtWidgets import QListWidget, QPushButton
+            self.init_list = QListWidget()
+            next_btn = QPushButton("Avanzar turno")
+            next_btn.clicked.connect(lambda: self.init_list.addItem("Turno avanzado"))
+            tab_layout.addWidget(self.init_list)
+            tab_layout.addWidget(next_btn)
+        elif nombre == "Plantillas":
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
+            self.templates_list = QListWidget()
+            btn_load = QPushButton("Cargar")
+            btn_del = QPushButton("Eliminar")
+            btn_use = QPushButton("Usar")
+            btns = QHBoxLayout(); btns.addWidget(btn_load); btns.addWidget(btn_del); btns.addWidget(btn_use)
+            tab_layout.addWidget(self.templates_list)
+            tab_layout.addLayout(btns)
+        elif nombre == "Notas":
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
+            self.notes_list = QListWidget()
+            btn_add = QPushButton("Agregar")
+            btn_edit = QPushButton("Editar")
+            btn_del = QPushButton("Eliminar")
+            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_edit); btns.addWidget(btn_del)
+            tab_layout.addWidget(self.notes_list)
+            tab_layout.addLayout(btns)
+        elif nombre == "Macros":
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
+            self.macros_list = QListWidget()
+            btn_add = QPushButton("Agregar")
+            btn_del = QPushButton("Eliminar")
+            btn_run = QPushButton("Ejecutar")
+            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_run)
+            tab_layout.addWidget(self.macros_list)
+            tab_layout.addLayout(btns)
+        elif nombre == "Historial":
+            from PyQt5.QtWidgets import QListWidget
+            self.history_list = QListWidget()
+            tab_layout.addWidget(self.history_list)
+        else:
+            tab_layout.addWidget(QLabel(f"Aquí va el contenido de {nombre}"))
+        tab.setLayout(tab_layout)
+        self.tabs.addTab(tab, nombre)
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = VTTWindow()
+    window.show()
+    sys.exit(app.exec_())
+
+
+    def load_template(self):
+        print("load_template llamado (stub)")
+        # Aquí se implementará la carga de plantillas
+
+    def remove_template(self):
+        print("remove_template llamado (stub)")
+        # Aquí se implementará la eliminación de plantillas
+
+    def use_template(self):
+        print("use_template llamado (stub)")
+        # Aquí se implementará el uso de plantillas
+
+    def add_note(self):
+        print("add_note llamado (stub)")
+        # Aquí se implementará agregar nota
+
+    def remove_note(self):
+        print("remove_note llamado (stub)")
+        # Aquí se implementará eliminar nota
+
+    def edit_note(self):
+        print("edit_note llamado (stub)")
+        # Aquí se implementará editar nota
+
+    def add_macro(self):
+        print("add_macro llamado (stub)")
+        # Aquí se implementará agregar macro
+
+    def remove_macro(self):
+        print("remove_macro llamado (stub)")
+        # Aquí se implementará eliminar macro
+
+    def run_macro(self):
+        print("run_macro llamado (stub)")
+        # Aquí se implementará ejecutar macro
+
+    def save_campaign(self):
+        print("save_campaign llamado (stub)")
+        # Aquí se implementará guardar campaña
+
+    def load_campaign(self):
+        print("load_campaign llamado (stub)")
+        # Aquí se implementará cargar campaña
+
     def on_initiative_reordered(self, *args, **kwargs):
         pass
     def _initiative_drag_start(self, *args, **kwargs):
@@ -96,13 +242,8 @@ class VTTWindow(QMainWindow):
 
             # Tabs principales
             self.tabs = QTabWidget()
-            self.layout.addWidget(self.tabs)
-            self.central_widget.setLayout(self.layout)
-
-            # --- TAB MAPA ---
-            self.map_widget = MapWidget()
+            self.tabs.setMinimumSize(400, 400)
             map_layout = QVBoxLayout()
-            # --- Controles de mapa ---
             map_controls = QHBoxLayout()
             btn_zoom_in = QPushButton("+")
             btn_zoom_out = QPushButton("–")
@@ -112,6 +253,7 @@ class VTTWindow(QMainWindow):
             btn_fog = QPushButton("Niebla")
             fog_mode_combo = QComboBox(); fog_mode_combo.addItems(["Revelar", "Ocultar"])
             fog_brush_spin = QSpinBox(); fog_brush_spin.setRange(10, 100); fog_brush_spin.setValue(40)
+            self.map_widget = MapWidget()
             map_controls.addWidget(btn_zoom_in)
             map_controls.addWidget(btn_zoom_out)
             map_controls.addWidget(btn_grid)
@@ -120,29 +262,17 @@ class VTTWindow(QMainWindow):
             map_controls.addWidget(btn_fog)
             map_controls.addWidget(fog_mode_combo)
             map_controls.addWidget(fog_brush_spin)
+            map_layout.addLayout(map_controls)
             # Conexiones
             btn_zoom_in.clicked.connect(self.map_widget.zoom_in)
             btn_zoom_out.clicked.connect(self.map_widget.zoom_out)
             btn_grid.clicked.connect(self.map_widget.toggle_grid)
             grid_type_combo.currentTextChanged.connect(lambda t: self.map_widget.set_grid_type('cuadricula' if t=="Cuadrícula" else 'hex'))
-            grid_size_spin.valueChanged.connect(self.map_widget.set_grid_size)
-            btn_fog.clicked.connect(self.map_widget.toggle_fog)
-            fog_mode_combo.currentTextChanged.connect(lambda t: self.map_widget.set_fog_mode('revelar' if t=="Revelar" else 'ocultar'))
-            fog_brush_spin.valueChanged.connect(lambda v: setattr(self.map_widget, 'fog_brush_radius', v))
-            # Layout
-            map_layout.addLayout(map_controls)
-            # --- Botones guardar/cargar estado mapa ---
-            map_save_load = QHBoxLayout()
-            btn_save_map = QPushButton("Guardar estado")
-            btn_load_map = QPushButton("Cargar estado")
-            map_save_load.addWidget(btn_save_map)
-            map_save_load.addWidget(btn_load_map)
-            map_layout.addLayout(map_save_load)
             map_layout.addWidget(self.map_widget)
+
             map_tab = QWidget()
             map_tab.setLayout(map_layout)
             self.tabs.addTab(map_tab, "Mapa")
-            print("Agregada pestaña: Mapa")
 
             # --- TAB CHAT ---
             chat_tab = QWidget()
@@ -157,47 +287,10 @@ class VTTWindow(QMainWindow):
             self.send_btn = QPushButton("Enviar")
             chat_input_layout.addWidget(self.send_btn)
 
-            # --- Controles de calidad de audio y volumen ---
-            audio_controls_layout = QHBoxLayout()
-            self.sr_label = QLabel("Frecuencia (Hz):")
-            self.sr_spin = QSpinBox(); self.sr_spin.setRange(8000, 48000); self.sr_spin.setValue(16000)
-            self.bs_label = QLabel("Bloque:")
-            self.bs_spin = QSpinBox(); self.bs_spin.setRange(256, 4096); self.bs_spin.setValue(1024)
-            self.vol_label = QLabel("Volumen:")
-            self.vol_slider = QSlider(Qt.Horizontal); self.vol_slider.setRange(10, 200); self.vol_slider.setValue(100)
-            audio_controls_layout.addWidget(self.sr_label)
-            audio_controls_layout.addWidget(self.sr_spin)
-            audio_controls_layout.addWidget(self.bs_label)
-            audio_controls_layout.addWidget(self.bs_spin)
-            audio_controls_layout.addWidget(self.vol_label)
-            audio_controls_layout.addWidget(self.vol_slider)
-            chat_layout.addLayout(audio_controls_layout)
-
-            # Botón de voz Push-to-Talk
-            self.voice_btn = QPushButton("🎤 Hablar")
-            self.voice_btn.setStyleSheet("font-size: 20px; padding: 12px 28px; background: #4caf50; color: white; border-radius: 8px; font-weight: bold;")
-            chat_layout.addWidget(self.voice_btn)
-            self.voice_btn.pressed.connect(self.start_voice_ui)
-            self.voice_btn.released.connect(self.stop_voice_ui)
-
-            # Notificación de voz recibida
-            self.voice_rx_label = QLabel("")
-            self.voice_rx_label.setStyleSheet("font-size: 18px; color: #f44336; font-weight: bold;")
-            self.voice_rx_label.setAlignment(Qt.AlignCenter)
-            chat_layout.addWidget(self.voice_rx_label)
-
-            # Inicializa parámetros de audio en el cliente
-            if hasattr(self.network, 'fs'):
-                self.sr_spin.setValue(self.network.fs)
-                self.bs_spin.setValue(self.network.blocksize)
-            self.sr_spin.valueChanged.connect(self.update_audio_params)
-            self.bs_spin.valueChanged.connect(self.update_audio_params)
-            self.vol_slider.valueChanged.connect(self.update_volume)
-
             chat_layout.addLayout(chat_input_layout)
             chat_tab.setLayout(chat_layout)
             self.tabs.addTab(chat_tab, "Chat")
-            print("Agregada pestaña: Chat")
+            
 
             # --- TAB DADOS ---
             dice_tab = QWidget()
@@ -216,7 +309,7 @@ class VTTWindow(QMainWindow):
             dice_layout.addWidget(self.dice_history)
             dice_tab.setLayout(dice_layout)
             self.tabs.addTab(dice_tab, "Dados")
-            print("Agregada pestaña: Dados")
+            
 
             # --- TAB FICHAS ---
             sheet_tab = QTabWidget()
@@ -227,12 +320,12 @@ class VTTWindow(QMainWindow):
             dnd_widget = self.map_widget.make_dnd_sheet()
             sheet_tab.addTab(dnd_widget, "D&D")
             self.tabs.addTab(sheet_tab, "Fichas")
-            print("Agregada pestaña: Fichas")
+            
 
             # --- TAB FICHAS COMPARTIDAS ---
             self.shared_sheets_tab = QTabWidget()
             self.tabs.addTab(self.shared_sheets_tab, "Fichas compartidas")
-            print("Agregada pestaña: Fichas compartidas")
+            
 
             # --- TAB INICIATIVA ---
             self.initiative_tab = QWidget()
@@ -257,7 +350,7 @@ class VTTWindow(QMainWindow):
             self.add_init_btn.clicked.connect(self.add_initiative_entry_vtt)
             self.del_init_btn.clicked.connect(self.remove_initiative_entry)
             self.next_init_btn.clicked.connect(self.advance_initiative)
-            print("Agregada pestaña: Iniciativa")
+            
 
             # --- TAB PLANTILLAS ---
             self.templates_tab = QWidget()
@@ -278,7 +371,7 @@ class VTTWindow(QMainWindow):
             self.load_template_btn.clicked.connect(self.load_template)
             self.del_template_btn.clicked.connect(self.remove_template)
             self.use_template_btn.clicked.connect(self.use_template)
-            print("Agregada pestaña: Plantillas")
+            
 
             # --- TAB NOTAS ---
             self.notes_tab = QWidget()
@@ -299,7 +392,7 @@ class VTTWindow(QMainWindow):
             self.add_note_btn.clicked.connect(self.add_note)
             self.edit_note_btn.clicked.connect(self.edit_note)
             self.del_note_btn.clicked.connect(self.remove_note)
-            print("Agregada pestaña: Notas")
+            
 
             # --- TAB MACROS ---
             self.macros_tab = QWidget()
@@ -319,12 +412,12 @@ class VTTWindow(QMainWindow):
             self.add_macro_btn.clicked.connect(self.add_macro)
             self.del_macro_btn.clicked.connect(self.remove_macro)
             self.run_macro_btn.clicked.connect(self.run_macro)
-            print("Agregada pestaña: Macros")
+            
 
             # --- TAB HISTORIAL ---
             self.history_list = QListWidget()
             self.tabs.addTab(self.history_list, "Historial")
-            print("Agregada pestaña: Historial")
+            
 
             # --- GUARDAR/CARGAR CAMPAÑA ---
             self.save_campaign_btn = QPushButton("Guardar campaña")
@@ -334,7 +427,7 @@ class VTTWindow(QMainWindow):
             self.save_campaign_btn.clicked.connect(self.save_campaign)
             self.load_campaign_btn.clicked.connect(self.load_campaign)
 
-            print("Constructor VTTWindow completo")
+            
         except Exception as e:
             import traceback
             print("[ERROR en constructor VTTWindow]:", e)
@@ -356,6 +449,34 @@ class MapWidget(QWidget):
         self.pan = QPoint(0, 0)
         self.fog_brush_radius = 40
         # ... otros atributos necesarios ...
+
+    def zoom_in(self):
+        self.zoom *= 1.2
+        self.update()
+
+    def zoom_out(self):
+        self.zoom /= 1.2
+        self.update()
+
+    def toggle_grid(self):
+        self.grid_type = 'hex' if self.grid_type == 'cuadricula' else 'cuadricula'
+        self.update()
+
+    def set_grid_type(self, tipo):
+        self.grid_type = tipo
+        self.update()
+
+    def set_grid_size(self, size):
+        self.grid_size = int(size)
+        self.update()
+
+    def toggle_fog(self):
+        self.show_fog = not self.show_fog
+        self.update()
+
+    def set_fog_mode(self, modo):
+        self.fog_mode = modo
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
