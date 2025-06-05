@@ -19,24 +19,57 @@ class VTTWindow(QMainWindow):
         self.add_tab("Chat")
         
         
+        
         self.add_tab("Fichas")
         self.add_tab("Iniciativa")
         self.add_tab("Plantillas")
         self.add_tab("Notas")
         self.add_tab("Macros")
         self.add_tab("Historial")
+        self.add_tab("Agenda")
+        self.add_tab("Audio")
 
     def add_tab(self, nombre):
+        from PyQt5.QtWidgets import QVBoxLayout
         tab = QWidget()
         tab_layout = QVBoxLayout()
         # --- Sistema de campaña: botones globales ---
         if not hasattr(self, '_campaign_buttons_added'):
-            from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QFileDialog, QMessageBox
+            from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QFileDialog, QMessageBox, QMenuBar, QAction
             import json, base64, io
             from PyQt5.QtGui import QImage
             from PyQt5.QtCore import QByteArray
             btn_save_campaign = QPushButton("Guardar campaña")
             btn_load_campaign = QPushButton("Cargar campaña")
+            # --- Modo DM/Jugador ---
+            self._modo_dm = True  # Por defecto DM
+            if not hasattr(self, '_menubar_added'):
+                menubar = QMenuBar(self)
+                modo_menu = menubar.addMenu("Modo")
+                act_dm = QAction("DM", self, checkable=True)
+                act_jugador = QAction("Jugador", self, checkable=True)
+                act_dm.setChecked(True)
+                modo_menu.addAction(act_dm)
+                modo_menu.addAction(act_jugador)
+                def set_dm():
+                    self._modo_dm = True
+                    act_dm.setChecked(True)
+                    act_jugador.setChecked(False)
+                    if hasattr(self, 'update_notes_ui'):
+                        self.update_notes_ui()
+                def set_jugador():
+                    self._modo_dm = False
+                    act_dm.setChecked(False)
+                    act_jugador.setChecked(True)
+                    if hasattr(self, 'update_notes_ui'):
+                        self.update_notes_ui()
+                act_dm.triggered.connect(set_dm)
+                act_jugador.triggered.connect(set_jugador)
+                if hasattr(self, 'setMenuBar'):
+                    self.setMenuBar(menubar)
+                else:
+                    self.central_widget.layout().insertWidget(0, menubar)
+                self._menubar_added = True
             def save_campaign():
                 import datetime, os
                 data = {}
@@ -236,14 +269,48 @@ class VTTWindow(QMainWindow):
                 # Iniciativa
                 if 'iniciativa' in data and hasattr(self, 'init_list'):
                     self.init_list.clear()
-                    for i in data['iniciativa']:
+                    ini_data = data['iniciativa']
+                    if isinstance(ini_data, dict):
+                        lista = ini_data.get('lista', [])
+                        turno = ini_data.get('turno', 0)
+                    else:
+                        lista = ini_data
+                        turno = 0
+                    for i in lista:
                         self.init_list.addItem(i)
+                    self._initiative_turn = turno
+                    # Refresca el UI si la función existe
+                    if hasattr(self, 'init_list') and hasattr(self, '_initiative_turn'):
+                        def refresh_initiative():
+                            for i in range(self.init_list.count()):
+                                item = self.init_list.item(i)
+                                txt = item.text()
+                                if txt.startswith("▶ "):
+                                    txt = txt[2:]
+                                item.setText(txt)
+                            if self.init_list.count():
+                                idx = self._initiative_turn % self.init_list.count()
+                                item = self.init_list.item(idx)
+                                item.setText("▶ " + item.text())
+                                self.init_list.setCurrentRow(idx)
+                        refresh_initiative()
+                # Agenda
+                if 'agenda' in data and hasattr(self, 'events_by_date'):
+                    self.events_by_date = data['agenda']
+                    if hasattr(self, 'calendar') and hasattr(self, 'event_list'):
+                        def refresh_events():
+                            date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                            self.event_list.clear()
+                            for ev in self.events_by_date.get(date, []):
+                                self.event_list.addItem(ev)
+                        refresh_events()
                 # Plantillas
                 if 'plantillas' in data and hasattr(self, 'template_list'):
                     self.template_list.clear()
                     for t in data['plantillas']:
                         self.template_list.addItem(t)
                 QMessageBox.information(self, "Campaña cargada", f"Campaña cargada de {path}")
+
             if not hasattr(self, '_campaign_bar'):
                 self._campaign_bar = QHBoxLayout()
                 self._campaign_bar.addWidget(btn_save_campaign)
@@ -553,22 +620,110 @@ class VTTWindow(QMainWindow):
             tab_layout.addLayout(controls)
             tab_layout.addWidget(self.map_widget)
         elif nombre == "Chat":
-            from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, QMessageBox
+            from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout, QColorDialog
+            from PyQt5.QtGui import QColor
+            import re, random
             self.chat_list = QListWidget()
-            chat_input_layout = QHBoxLayout()
-            self.chat_input = QLineEdit()
-            self.chat_send = QPushButton("Enviar")
-            chat_input_layout.addWidget(self.chat_input)
-            chat_input_layout.addWidget(self.chat_send)
+            chat_input = QLineEdit()
+            chat_send = QPushButton("Enviar")
+            chat_bar = QHBoxLayout(); chat_bar.addWidget(chat_input); chat_bar.addWidget(chat_send)
             tab_layout.addWidget(self.chat_list)
-            tab_layout.addLayout(chat_input_layout)
+            tab_layout.addLayout(chat_bar)
+
+            # Botones guardar/cargar chat
             btns = QHBoxLayout()
             btn_save = QPushButton("Guardar chat")
             btn_load = QPushButton("Cargar chat")
             btns.addWidget(btn_save)
             btns.addWidget(btn_load)
             tab_layout.addLayout(btns)
-            self.chat_send.clicked.connect(lambda: self.chat_list.addItem(self.chat_input.text()) or self.chat_input.clear())
+
+            # Macros en memoria de sesión
+            if not hasattr(self, '_chat_macros'):
+                self._chat_macros = {}
+
+            def roll_dice(expr):
+                # Soporta expresiones tipo 2d6+3, d20, 1d8-1, d100, etc.
+                m = re.fullmatch(r"(\d*)d(\d+)([+-]\d+)?", expr.replace(' ',''))
+                if not m:
+                    return None
+                n, die, mod = m.groups()
+                n = int(n) if n else 1
+                die = int(die)
+                mod = int(mod) if mod else 0
+                rolls = [random.randint(1, die) for _ in range(n)]
+                total = sum(rolls) + mod
+                return f"[{expr}] → {rolls} {'+'+str(mod) if mod else ''} = {total}"
+
+            def send_chat():
+                txt = chat_input.text().strip()
+                if not txt:
+                    return
+                # --- Macros ---
+                if txt.startswith("/macro "):
+                    # /macro saludo=/w Gandalf Hola!
+                    try:
+                        name, cmd = txt[7:].split('=',1)
+                        name = name.strip()
+                        self._chat_macros[name] = cmd.strip()
+                        self.chat_list.addItem(f"Macro '{name}' guardada.")
+                    except Exception:
+                        self.chat_list.addItem("Error de macro. Usa: /macro nombre=comando")
+                    chat_input.clear()
+                    return
+                if txt.startswith("/") and not txt.startswith("/w ") and not txt.startswith("/macro "):
+                    macro = txt[1:].split(' ')[0]
+                    if macro in self._chat_macros:
+                        txt = self._chat_macros[macro]
+                # --- Dados ---
+                if txt.startswith("/d") or re.match(r"/\d*d\d+", txt):
+                    expr = txt[1:] if txt.startswith("/d") else txt[1:]
+                    res = roll_dice(expr)
+                    if res:
+                        item = self.chat_list.addItem(f"🎲 {res}")
+                    else:
+                        self.chat_list.addItem("Comando de dado inválido.")
+                    chat_input.clear()
+                    return
+                # --- Whispers ---
+                if txt.startswith("/w "):
+                    # /w Gandalf Hola!
+                    parts = txt.split(' ',2)
+                    if len(parts)>=3:
+                        target, msg = parts[1], parts[2]
+                        modo_dm = getattr(self, '_modo_dm', True)
+                        if modo_dm or (hasattr(self, 'char_name') and self.char_name.text()==target):
+                            self.chat_list.addItem(f"(whisper a {target}): {msg}")
+                        else:
+                            self.chat_list.addItem("No tienes permiso para enviar/ver este whisper.")
+                    else:
+                        self.chat_list.addItem("Uso: /w <nombre> <mensaje>")
+                    chat_input.clear()
+                    return
+                # Normal
+                self.chat_list.addItem(txt)
+                chat_input.clear()
+            chat_send.clicked.connect(send_chat)
+            chat_input.returnPressed.connect(send_chat)
+            def save_chat():
+                from PyQt5.QtWidgets import QFileDialog, QMessageBox
+                path, _ = QFileDialog.getSaveFileName(tab, "Guardar chat", "", "Chat (*.txt)")
+                if path:
+                    with open(path, 'w', encoding='utf-8') as f:
+                        for i in range(self.chat_list.count()):
+                            f.write(self.chat_list.item(i).text() + '\n')
+                    QMessageBox.information(tab, "Chat guardado", f"Chat guardado en {path}")
+            def load_chat():
+                from PyQt5.QtWidgets import QFileDialog, QMessageBox
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar chat", "", "Chat (*.txt)")
+                if path:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        self.chat_list.clear()
+                        for line in f:
+                            self.chat_list.addItem(line.rstrip('\n'))
+                    QMessageBox.information(tab, "Chat cargado", f"Chat cargado de {path}")
+            btn_save.clicked.connect(save_chat)
+            btn_load.clicked.connect(load_chat)
             def save_chat():
                 path, _ = QFileDialog.getSaveFileName(tab, "Guardar chat", "", "Chat (*.txt)")
                 if path:
@@ -656,116 +811,45 @@ class VTTWindow(QMainWindow):
                         QMessageBox.critical(tab, "Error", f"No se pudo cargar la ficha: {e}")
             btn_save.clicked.connect(save_ficha)
             btn_load.clicked.connect(load_ficha)
-        elif nombre == "Iniciativa":
-            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QMessageBox
-            self.init_list = QListWidget()
-            btn_add = QPushButton("Agregar")
-            btn_del = QPushButton("Eliminar")
-            btn_reset = QPushButton("Resetear")
-            btn_next = QPushButton("Avanzar turno")
-            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_reset); btns.addWidget(btn_next)
-            tab_layout.addWidget(self.init_list)
-            tab_layout.addLayout(btns)
-            def add_initiative():
-                text, ok = QInputDialog.getText(tab, "Agregar a iniciativa", "Nombre e iniciativa (ej: Gandalf 17):")
-                if ok and text.strip():
-                    try:
-                        name, ini = text.rsplit(' ', 1)
-                        ini = int(ini)
-                        self.init_list.addItem(f"{name.strip()} [{ini}]")
-                        sort_initiative()
-                    except Exception:
-                        QMessageBox.warning(tab, "Error", "Formato inválido. Usa: Nombre 17")
-            def del_initiative():
-                row = self.init_list.currentRow()
-                if row >= 0:
-                    self.init_list.takeItem(row)
-            def reset_initiative():
-                self.init_list.clear()
-            def sort_initiative():
-                items = [self.init_list.item(i).text() for i in range(self.init_list.count())]
-                def extract_ini(txt):
-                    try:
-                        return int(txt.split('[')[-1].rstrip(']'))
-                    except: return 0
-                items.sort(key=extract_ini, reverse=True)
-                self.init_list.clear()
-                for it in items:
-                    self.init_list.addItem(it)
-            def next_turn():
-                if self.init_list.count() > 1:
-                    first = self.init_list.takeItem(0)
-                    self.init_list.addItem(first)
-            btn_add.clicked.connect(add_initiative)
-            btn_del.clicked.connect(del_initiative)
-            btn_reset.clicked.connect(reset_initiative)
-            btn_next.clicked.connect(next_turn)
-        elif nombre == "Plantillas":
-            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QFileDialog, QMessageBox
-            import json
-            self.templates_list = QListWidget()
-            btn_add = QPushButton("Agregar")
-            btn_del = QPushButton("Eliminar")
-            btn_use = QPushButton("Usar")
-            btn_save = QPushButton("Guardar")
-            btn_load = QPushButton("Cargar")
-            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_use); btns.addWidget(btn_save); btns.addWidget(btn_load)
-            tab_layout.addWidget(self.templates_list)
-            tab_layout.addLayout(btns)
-            def add_template():
-                dlg = QInputDialog(tab)
-                dlg.setWindowTitle("Agregar plantilla")
-                dlg.setLabelText("Nombre, Clase, Nivel (ej: Legolas,Ranger,7):")
-                if dlg.exec_():
-                    text = dlg.textValue()
-                    parts = [p.strip() for p in text.split(',')]
-                    if len(parts) == 3 and parts[2].isdigit():
-                        nombre, clase, nivel = parts
-                        self.templates_list.addItem(json.dumps({'nombre': nombre, 'clase': clase, 'nivel': int(nivel)}, ensure_ascii=False))
-                    else:
-                        QMessageBox.warning(tab, "Error", "Formato inválido. Usa: Nombre,Clase,Nivel")
-            def del_template():
-                row = self.templates_list.currentRow()
-                if row >= 0:
-                    self.templates_list.takeItem(row)
-            def use_template():
-                item = self.templates_list.currentItem()
-                if item and hasattr(self, 'char_name'):
-                    try:
-                        data = json.loads(item.text())
-                        self.char_name.setText(data.get('nombre', ''))
-                        self.char_class.setText(data.get('clase', ''))
-                        self.char_level.setText(str(data.get('nivel', '')))
-                        QMessageBox.information(tab, "Plantilla usada", "Ficha rellenada con la plantilla seleccionada.")
-                    except Exception as e:
-                        QMessageBox.critical(tab, "Error", f"No se pudo usar la plantilla: {e}")
-            def save_templates():
-                path, _ = QFileDialog.getSaveFileName(tab, "Guardar plantillas", "", "Plantillas (*.json)")
-                if path:
-                    try:
-                        data = [json.loads(self.templates_list.item(i).text()) for i in range(self.templates_list.count())]
-                        with open(path, 'w', encoding='utf-8') as f:
-                            json.dump(data, f, ensure_ascii=False, indent=2)
-                        QMessageBox.information(tab, "Plantillas guardadas", f"Plantillas guardadas en {path}")
-                    except Exception as e:
-                        QMessageBox.critical(tab, "Error", f"No se pudo guardar las plantillas: {e}")
-            def load_templates():
-                path, _ = QFileDialog.getOpenFileName(tab, "Cargar plantillas", "", "Plantillas (*.json)")
-                if path:
-                    try:
-                        with open(path, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                        self.templates_list.clear()
-                        for tpl in data:
-                            self.templates_list.addItem(json.dumps(tpl, ensure_ascii=False))
-                        QMessageBox.information(tab, "Plantillas cargadas", f"Plantillas cargadas de {path}")
-                    except Exception as e:
-                        QMessageBox.critical(tab, "Error", f"No se pudo cargar las plantillas: {e}")
-            btn_add.clicked.connect(add_template)
-            btn_del.clicked.connect(del_template)
-            btn_use.clicked.connect(use_template)
-            btn_save.clicked.connect(save_templates)
-            btn_load.clicked.connect(load_templates)
+            from PyQt5.QtWidgets import QLabel, QListWidget, QLineEdit, QPushButton
+            notes_label = QLabel("Notas de este mapa:")
+            notes_list = QListWidget()
+            notes_input = QLineEdit()
+            notes_input.setPlaceholderText("Agregar nota...")
+            notes_add_btn = QPushButton("+")
+            notes_del_btn = QPushButton("-")
+            notes_priv_chk = QPushButton("🔒 Pública")
+            notes_priv_chk.setCheckable(True)
+            notes_priv_chk.setChecked(False)
+            notes_bar = QHBoxLayout()
+            notes_bar.addWidget(notes_input)
+            notes_bar.addWidget(notes_add_btn)
+            notes_bar.addWidget(notes_del_btn)
+            notes_bar.addWidget(notes_priv_chk)
+            tab_layout.addWidget(notes_label)
+            tab_layout.addWidget(notes_list)
+            tab_layout.addLayout(notes_bar)
+
+            # --- Sincroniza notas con el mapa activo y el modo ---
+            def update_notes():
+                notes_list.clear()
+                scene = self.map_widget.scene
+                modo_dm = getattr(self, '_modo_dm', True)
+                if scene:
+                    for n in getattr(scene, 'notes', []):
+                        txt = n['texto'] if isinstance(n, dict) else n
+                        priv = n.get('privada', False) if isinstance(n, dict) else False
+                        if priv and not modo_dm:
+                            continue  # Solo DM ve privadas
+                        if priv:
+                            notes_list.addItem("🔒 " + txt)
+                        else:
+                            notes_list.addItem(txt)
+                # UI: solo DM puede marcar privadas
+                notes_priv_chk.setEnabled(modo_dm)
+                if not modo_dm:
+                    notes_priv_chk.setChecked(False)
+                    notes_priv_chk.setText("🔓 Pública")
         elif nombre == "Notas":
             from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QFileDialog, QMessageBox
             self.notes_list = QListWidget()
@@ -826,11 +910,362 @@ class VTTWindow(QMainWindow):
             btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_run)
             tab_layout.addWidget(self.macros_list)
             tab_layout.addLayout(btns)
+        elif nombre == "Iniciativa":
+            from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QInputDialog, QMessageBox, QLabel, QSpinBox
+            import random
+            self.init_list = QListWidget()
+            self.init_list.setSelectionMode(QListWidget.SingleSelection)
+            tab_layout.addWidget(QLabel("Iniciativa - Orden de Turnos"))
+            tab_layout.addWidget(self.init_list)
+            # --- Controles ---
+            controls = QHBoxLayout()
+            name_input = QLineEdit(); name_input.setPlaceholderText("Nombre")
+            ini_input = QSpinBox(); ini_input.setRange(1, 99); ini_input.setPrefix("Ini: ")
+            roll_btn = QPushButton("Tirar d20")
+            add_btn = QPushButton("Añadir")
+            del_btn = QPushButton("Eliminar")
+            up_btn = QPushButton("↑")
+            down_btn = QPushButton("↓")
+            next_btn = QPushButton("Siguiente")
+            prev_btn = QPushButton("Anterior")
+            restart_btn = QPushButton("Reiniciar")
+            announce_btn = QPushButton("Anunciar turno")
+            controls.addWidget(name_input)
+            controls.addWidget(ini_input)
+            controls.addWidget(roll_btn)
+            controls.addWidget(add_btn)
+            controls.addWidget(del_btn)
+            controls.addWidget(up_btn)
+            controls.addWidget(down_btn)
+            controls.addWidget(next_btn)
+            controls.addWidget(prev_btn)
+            controls.addWidget(restart_btn)
+            controls.addWidget(announce_btn)
+            tab_layout.addLayout(controls)
+
+            # --- Estado de turno actual ---
+            self._initiative_turn = 0
+            def refresh_initiative():
+                for i in range(self.init_list.count()):
+                    item = self.init_list.item(i)
+                    txt = item.text()
+                    # Limpia iconos previos
+                    if txt.startswith("▶ "):
+                        txt = txt[2:]
+                    # Iconos por tipo
+                    if "(PJ)" in txt or "(Jugador)" in txt:
+                        txt_icon = "🎲 " + txt
+                    elif "(Enemigo)" in txt or "(NPC)" in txt:
+                        txt_icon = "👹 " + txt
+                    else:
+                        txt_icon = txt
+                    item.setText(txt_icon)
+                    item.setForeground(Qt.white)
+                    font = item.font(); font.setBold(False); item.setFont(font)
+                    item.setBackground(Qt.transparent)
+                if self.init_list.count():
+                    idx = self._initiative_turn % self.init_list.count()
+                    item = self.init_list.item(idx)
+                    txt = item.text()
+                    # Evita duplicar ▶
+                    if not txt.startswith("▶ "):
+                        item.setText("▶ " + txt)
+                    item.setForeground(Qt.darkGreen)
+                    font = item.font(); font.setBold(True); item.setFont(font)
+                    item.setBackground(Qt.green)
+                    self.init_list.setCurrentRow(idx)
+            def add_entry():
+                name = name_input.text().strip()
+                ini = ini_input.value()
+                if not name:
+                    QMessageBox.warning(tab, "Falta nombre", "Introduce un nombre.")
+                    return
+                self.init_list.addItem(f"{name} ({ini})")
+                sort_initiative()
+                name_input.clear()
+            def roll_initiative():
+                name = name_input.text().strip()
+                ini = random.randint(1,20)
+                ini_input.setValue(ini)
+                if name:
+                    self.init_list.addItem(f"{name} ({ini})")
+                    sort_initiative()
+                    name_input.clear()
+            def del_entry():
+                row = self.init_list.currentRow()
+                if row >= 0:
+                    self.init_list.takeItem(row)
+                    if self.init_list.count()==0:
+                        self._initiative_turn = 0
+                    else:
+                        self._initiative_turn %= self.init_list.count()
+                    refresh_initiative()
+            def move_up():
+                row = self.init_list.currentRow()
+                if row > 0:
+                    item = self.init_list.takeItem(row)
+                    self.init_list.insertItem(row-1, item)
+                    self.init_list.setCurrentRow(row-1)
+                    refresh_initiative()
+            def move_down():
+                row = self.init_list.currentRow()
+                if row < self.init_list.count()-1:
+                    item = self.init_list.takeItem(row)
+                    self.init_list.insertItem(row+1, item)
+                    self.init_list.setCurrentRow(row+1)
+                    refresh_initiative()
+            def next_turn():
+                if self.init_list.count()==0:
+                    return
+                self._initiative_turn = (self._initiative_turn+1) % self.init_list.count()
+                refresh_initiative()
+            def prev_turn():
+                if self.init_list.count()==0:
+                    return
+                self._initiative_turn = (self._initiative_turn-1) % self.init_list.count()
+                refresh_initiative()
+            def restart():
+                self._initiative_turn = 0
+                refresh_initiative()
+            def sort_initiative():
+                # Ordena por iniciativa (número entre paréntesis, descendente)
+                items = [self.init_list.item(i).text() for i in range(self.init_list.count())]
+                items = sorted(items, key=lambda x: int(x.split('(')[-1].split(')')[0]), reverse=True)
+                self.init_list.clear()
+                for it in items:
+                    self.init_list.addItem(it)
+                self._initiative_turn = 0
+                refresh_initiative()
+            def announce_turn():
+                if self.init_list.count()==0:
+                    return
+                idx = self._initiative_turn % self.init_list.count()
+                item = self.init_list.item(idx)
+                msg = f"Turno de: {item.text().replace('▶ ','')}"
+                if hasattr(self, 'chat_list'):
+                    self.chat_list.addItem(f"🛎️ {msg}")
+                else:
+                    QMessageBox.information(tab, "Turno", msg)
+            add_btn.clicked.connect(add_entry)
+            roll_btn.clicked.connect(roll_initiative)
+            del_btn.clicked.connect(del_entry)
+            up_btn.clicked.connect(move_up)
+            down_btn.clicked.connect(move_down)
+            next_btn.clicked.connect(next_turn)
+            prev_btn.clicked.connect(prev_turn)
+            restart_btn.clicked.connect(restart)
+            announce_btn.clicked.connect(announce_turn)
+            def on_initiative_double_click(item):
+                name = item.text()
+                # Limpia iconos y prefijos
+                for prefix in ["▶ ", "🎲 ", "👹 "]:
+                    if name.startswith(prefix):
+                        name = name[len(prefix):]
+                name = name.strip()
+                # Buscar token en todos los mapas
+                token_found = False
+                if hasattr(self, 'map_scenes') and hasattr(self, 'map_widget'):
+                    for idx, scene in enumerate(self.map_scenes):
+                        for tok in getattr(scene, 'tokens', []):
+                            # Puede ser dict o clase Token
+                            tname = tok['name'] if isinstance(tok, dict) else getattr(tok, 'name', None)
+                            if tname == name:
+                                # Cambia de mapa si es necesario
+                                if hasattr(self, 'map_widget') and hasattr(self.map_widget, 'set_scene'):
+                                    self.map_widget.set_scene(scene)
+                                # Centra el mapa en el token
+                                if hasattr(self.map_widget, 'pan') and hasattr(self.map_widget, 'update'):
+                                    # Suponemos que el token tiene 'x' y 'y' (dict) o pos (QPoint)
+                                    if isinstance(tok, dict):
+                                        x, y = tok.get('x', 0), tok.get('y', 0)
+                                    else:
+                                        pos = getattr(tok, 'pos', None)
+                                        x, y = pos.x(), pos.y() if pos else (0, 0)
+                                    # Centra el mapa
+                                    self.map_widget.pan = QPoint(-x + self.map_widget.width()//2, -y + self.map_widget.height()//2)
+                                    self.map_widget.update()
+                                token_found = True
+                                break
+                        if token_found:
+                            break
+                next_turn()
+                announce_turn()
+            self.init_list.itemDoubleClicked.connect(on_initiative_double_click)
+            refresh_initiative()
         elif nombre == "Historial":
             from PyQt5.QtWidgets import QListWidget
             self.history_list = QListWidget()
             tab_layout.addWidget(self.history_list)
+        elif nombre == "Agenda":
+            from PyQt5.QtWidgets import QCalendarWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox
+            from PyQt5.QtCore import QDate, Qt
+            self.calendar = QCalendarWidget()
+            self.event_list = QListWidget()
+            self.events_by_date = {}  # {QDate.toString(): [str, ...]}
+            def refresh_events():
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                self.event_list.clear()
+                for ev in self.events_by_date.get(date, []):
+                    self.event_list.addItem(ev)
+            def add_event():
+                text, ok = QInputDialog.getText(tab, "Nuevo Evento", "Descripción del evento:")
+                if ok and text.strip():
+                    date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                    self.events_by_date.setdefault(date, []).append(text.strip())
+                    refresh_events()
+            def edit_event():
+                row = self.event_list.currentRow()
+                if row < 0:
+                    return
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                old = self.events_by_date.get(date, [])[row]
+                text, ok = QInputDialog.getText(tab, "Editar Evento", "Descripción:", text=old)
+                if ok and text.strip():
+                    self.events_by_date[date][row] = text.strip()
+                    refresh_events()
+            def del_event():
+                row = self.event_list.currentRow()
+                if row < 0:
+                    return
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                del self.events_by_date[date][row]
+                if not self.events_by_date[date]:
+                    del self.events_by_date[date]
+                refresh_events()
+            btns = QHBoxLayout()
+            add_btn = QPushButton("Añadir")
+            edit_btn = QPushButton("Editar")
+            del_btn = QPushButton("Eliminar")
+            btns.addWidget(add_btn)
+            btns.addWidget(edit_btn)
+            btns.addWidget(del_btn)
+            vbox = QVBoxLayout()
+            vbox.addWidget(self.calendar)
+            vbox.addWidget(self.event_list)
+            vbox.addLayout(btns)
+            tab_layout.addLayout(vbox)
+            def highlight_event_days():
+                fmt_event = self.calendar.dateTextFormat(self.calendar.selectedDate())
+                fmt_event.setBackground(Qt.yellow)
+                fmt_event.setForeground(Qt.black)
+                fmt_normal = self.calendar.dateTextFormat(self.calendar.selectedDate())
+                fmt_normal.setBackground(Qt.transparent)
+                fmt_normal.setForeground(Qt.white)
+                # Limpia todos
+                for y in range(1970, 2100):
+                    for m in range(1,13):
+                        for d in range(1,32):
+                            try:
+                                date = QDate(y,m,d)
+                                self.calendar.setDateTextFormat(date, fmt_normal)
+                            except:
+                                pass
+                # Resalta días con eventos
+                for key in self.events_by_date.keys():
+                    date = QDate.fromString(key, "yyyy-MM-dd")
+                    if date.isValid():
+                        self.calendar.setDateTextFormat(date, fmt_event)
+
+            def refresh_events():
+                date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+                self.event_list.clear()
+                for ev in self.events_by_date.get(date, []):
+                    self.event_list.addItem("📅 " + ev)
+                highlight_event_days()
+                # Aviso en chat si hay eventos
+                if hasattr(self, 'chat_list') and self.events_by_date.get(date):
+                    self.chat_list.addItem(f"📅 Eventos para {date}: " + ", ".join(self.events_by_date[date]))
+
+            self.calendar.selectionChanged.connect(refresh_events)
+            add_btn.clicked.connect(add_event)
+            edit_btn.clicked.connect(edit_event)
+            del_btn.clicked.connect(del_event)
+            refresh_events()
+        elif nombre == "Audio":
+            from PyQt5.QtWidgets import QPushButton, QLabel, QSlider, QFileDialog, QListWidget, QHBoxLayout, QVBoxLayout
+            from PyQt5.QtCore import Qt
+            import os
+            self.audio_files = []
+            self.audio_list = QListWidget()
+            self.audio_player_label = QLabel("Ningún audio seleccionado")
+            self.audio_volume = QSlider(Qt.Horizontal)
+            self.audio_volume.setRange(0, 100)
+            self.audio_volume.setValue(80)
+            btn_load = QPushButton("Cargar audio")
+            btn_play = QPushButton("Reproducir")
+            btn_pause = QPushButton("Pausar")
+            btn_stop = QPushButton("Detener")
+            hbtns = QHBoxLayout()
+            hbtns.addWidget(btn_load)
+            hbtns.addWidget(btn_play)
+            hbtns.addWidget(btn_pause)
+            hbtns.addWidget(btn_stop)
+            vbox = QVBoxLayout()
+            vbox.addWidget(QLabel("Lista de audios (mp3/wav)"))
+            vbox.addWidget(self.audio_list)
+            vbox.addLayout(hbtns)
+            vbox.addWidget(QLabel("Volumen"))
+            vbox.addWidget(self.audio_volume)
+            vbox.addWidget(self.audio_player_label)
+            tab_layout.addLayout(vbox)
+            # --- Lógica de audio ---
+            import threading
+            import sounddevice as sd
+            import numpy as np
+            import wave
+            import sys
+            self._audio_stream = None
+            self._audio_data = None
+            self._audio_samplerate = 44100
+            self._audio_playing = False
+            def load_audio():
+                files, _ = QFileDialog.getOpenFileNames(tab, "Selecciona archivos de audio", "", "Audio (*.wav)")
+                for f in files:
+                    if f not in self.audio_files:
+                        self.audio_files.append(f)
+                        self.audio_list.addItem(os.path.basename(f))
+            def play_audio():
+                row = self.audio_list.currentRow()
+                if row < 0 or row >= len(self.audio_files):
+                    return
+                fname = self.audio_files[row]
+                self.audio_player_label.setText(f"Reproduciendo: {os.path.basename(fname)}")
+                def _play():
+                    try:
+                        wf = wave.open(fname, 'rb')
+                        self._audio_samplerate = wf.getframerate()
+                        data = wf.readframes(wf.getnframes())
+                        audio = np.frombuffer(data, dtype=np.int16)
+                        audio = audio.astype(np.float32) / 32768.0
+                        vol = self.audio_volume.value() / 100.0
+                        audio = audio * vol
+                        self._audio_playing = True
+                        sd.play(audio, samplerate=self._audio_samplerate)
+                        sd.wait()
+                        self._audio_playing = False
+                    except Exception as e:
+                        self.audio_player_label.setText(f"Error: {e}")
+                threading.Thread(target=_play, daemon=True).start()
+            def pause_audio():
+                try:
+                    sd.stop()
+                    self._audio_playing = False
+                except Exception:
+                    pass
+            def stop_audio():
+                try:
+                    sd.stop()
+                    self._audio_playing = False
+                    self.audio_player_label.setText("Ningún audio seleccionado")
+                except Exception:
+                    pass
+            btn_load.clicked.connect(load_audio)
+            btn_play.clicked.connect(play_audio)
+            btn_pause.clicked.connect(pause_audio)
+            btn_stop.clicked.connect(stop_audio)
+            self.audio_volume.valueChanged.connect(lambda v: None)
         else:
+            from PyQt5.QtWidgets import QLabel
             tab_layout.addWidget(QLabel(f"Aquí va el contenido de {nombre}"))
         tab.setLayout(tab_layout)
         self.tabs.addTab(tab, nombre)
