@@ -32,8 +32,87 @@ class VTTWindow(QMainWindow):
 
     def add_tab(self, nombre):
         from PyQt5.QtWidgets import QVBoxLayout
+        from PyQt5.QtGui import QPalette, QColor, QFont, QIcon
         tab = QWidget()
         tab_layout = QVBoxLayout()
+        # --- Modo oscuro/claro global ---
+        if not hasattr(self, '_theme_mode'):
+            self._theme_mode = 'dark'
+        if not hasattr(self, '_theme_toggle_button_added'):
+            from PyQt5.QtWidgets import QPushButton
+            self._theme_toggle_btn = QPushButton('🌙')
+            self._theme_toggle_btn.setToolTip('Cambiar modo claro/oscuro')
+            self._theme_toggle_btn.setFixedWidth(36)
+            self._theme_toggle_btn.setStyleSheet('font-size:18px;background:#222;color:#ffc;border-radius:10px;')
+            def toggle_theme():
+                if self._theme_mode == 'dark':
+                    self._theme_mode = 'light'
+                    app = self.parent() or self
+                    pal = app.palette()
+                    pal.setColor(QPalette.Window, QColor('#f7f7f7'))
+                    pal.setColor(QPalette.WindowText, QColor('#222'))
+                    pal.setColor(QPalette.Base, QColor('#fff'))
+                    pal.setColor(QPalette.AlternateBase, QColor('#e0e0e0'))
+                    pal.setColor(QPalette.Text, QColor('#222'))
+                    pal.setColor(QPalette.Button, QColor('#e0e0e0'))
+                    pal.setColor(QPalette.ButtonText, QColor('#222'))
+                    app.setPalette(pal)
+                    self._theme_toggle_btn.setText('☀️')
+                else:
+                    self._theme_mode = 'dark'
+                    app = self.parent() or self
+                    pal = app.palette()
+                    pal.setColor(QPalette.Window, QColor('#232323'))
+                    pal.setColor(QPalette.WindowText, QColor('#fff'))
+                    pal.setColor(QPalette.Base, QColor('#181818'))
+                    pal.setColor(QPalette.AlternateBase, QColor('#232323'))
+                    pal.setColor(QPalette.Text, QColor('#fff'))
+                    pal.setColor(QPalette.Button, QColor('#232323'))
+                    pal.setColor(QPalette.ButtonText, QColor('#fff'))
+                    app.setPalette(pal)
+                    self._theme_toggle_btn.setText('🌙')
+                # Refresca estilos de tabs
+                for i in range(self.tabs.count()):
+                    w = self.tabs.widget(i)
+                    w.setPalette(app.palette())
+                    w.update()
+            self._theme_toggle_btn.clicked.connect(toggle_theme)
+            self.tabs.setCornerWidget(self._theme_toggle_btn)
+            self._theme_toggle_button_added = True
+        # Fondo personalizado según pestaña y modo
+        color_map_dark = {
+            'Iniciativa': QColor('#203030'),
+            'Agenda': QColor('#202040'),
+            'Audio': QColor('#202020'),
+            'Voz': QColor('#1e2633'),
+            'Historial': QColor('#232323'),
+            'Macros': QColor('#2a1c2a'),
+            'Plantillas': QColor('#2a2a1c'),
+            'Notas': QColor('#1c2a1c'),
+            'Chat': QColor('#1c1c2a'),
+            'Mapa': QColor('#232323'),
+            'Fichas': QColor('#23231c')
+        }
+        color_map_light = {
+            'Iniciativa': QColor('#e6f5e6'),
+            'Agenda': QColor('#e6eaff'),
+            'Audio': QColor('#f7f7f7'),
+            'Voz': QColor('#eaf1ff'),
+            'Historial': QColor('#f0f0f0'),
+            'Macros': QColor('#f5e6f5'),
+            'Plantillas': QColor('#f5f5e6'),
+            'Notas': QColor('#e6f5e6'),
+            'Chat': QColor('#e6e6ff'),
+            'Mapa': QColor('#f0f0f0'),
+            'Fichas': QColor('#f0f0e6')
+        }
+        pal = tab.palette()
+        if self._theme_mode == 'dark':
+            pal.setColor(QPalette.Window, color_map_dark.get(nombre, QColor('#232323')))
+        else:
+            pal.setColor(QPalette.Window, color_map_light.get(nombre, QColor('#f7f7f7')))
+        tab.setAutoFillBackground(True)
+        tab.setPalette(pal)
         # --- Sistema de campaña: botones globales ---
         if not hasattr(self, '_campaign_buttons_added'):
             from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QFileDialog, QMessageBox, QMenuBar, QAction
@@ -307,6 +386,20 @@ class VTTWindow(QMainWindow):
                         refresh_events()
                 if 'agenda_audio' in data and hasattr(self, 'event_audio_by_date'):
                     self.event_audio_by_date = data['agenda_audio']
+                # Macros audio
+                if 'macros_audio' in data and hasattr(self, 'macros_audio'):
+                    self.macros_audio = data['macros_audio']
+                if 'macros_data' in data and hasattr(self, 'macros_list'):
+                    self.macros_data = data['macros_data']
+                    if hasattr(self, 'macros_list'):
+                        def refresh_macros():
+                            self.macros_list.clear()
+                            for m in self.macros_data:
+                                label = m
+                                if self.macros_audio.get(m):
+                                    label += " 🎵"
+                                self.macros_list.addItem(label)
+                        refresh_macros()
                 # Voz/Discord
                 if 'discord_url' in data:
                     self._discord_url_cache = data['discord_url']
@@ -753,6 +846,120 @@ class VTTWindow(QMainWindow):
                         QMessageBox.critical(tab, "Error", f"No se pudo cargar el chat: {e}")
             btn_save.clicked.connect(save_chat)
             btn_load.clicked.connect(load_chat)
+        elif nombre == "Macros":
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QLineEdit, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox, QLabel, QFileDialog
+            from PyQt5.QtGui import QFont, QIcon
+            import os
+            titulo = QLabel("Macros y Acciones Rápidas")
+            titulo.setFont(QFont('Segoe UI', 14, QFont.Bold))
+            titulo.setStyleSheet("color: #e7aaff; margin: 8px;")
+            tab_layout.addWidget(titulo)
+            self.macros_list = QListWidget()
+            self.macros_list.setStyleSheet("background:#2a1c2a;color:#fff;font-size:13px;border-radius:6px;")
+            self.macros_audio = {}  # {macro_name: audio_path or None}
+            def refresh_macros():
+                self.macros_list.clear()
+                for m in getattr(self, 'macros_data', []) or []:
+                    label = m
+                    if self.macros_audio.get(m):
+                        label += " 🎵"
+                    self.macros_list.addItem(label)
+            def add_macro():
+                text, ok = QInputDialog.getText(tab, "Nueva Macro", "Nombre de la macro:")
+                if ok and text.strip():
+                    macro = text.strip()
+                    if not hasattr(self, 'macros_data'):
+                        self.macros_data = []
+                    self.macros_data.append(macro)
+                    audio_path = None
+                    resp = QMessageBox.question(tab, "¿Asociar audio?", "¿Quieres asociar un audio a esta macro?", QMessageBox.Yes | QMessageBox.No)
+                    if resp == QMessageBox.Yes:
+                        files, _ = QFileDialog.getOpenFileNames(tab, "Selecciona archivo de audio", "", "Audio (*.wav)")
+                        if files:
+                            audio_path = files[0]
+                    self.macros_audio[macro] = audio_path
+                    refresh_macros()
+            def edit_macro():
+                row = self.macros_list.currentRow()
+                if row < 0:
+                    return
+                old = self.macros_data[row]
+                text, ok = QInputDialog.getText(tab, "Editar Macro", "Nuevo nombre:", text=old)
+                if ok and text.strip():
+                    new = text.strip()
+                    self.macros_data[row] = new
+                    # Transferir audio
+                    self.macros_audio[new] = self.macros_audio.pop(old, None)
+                    refresh_macros()
+            def del_macro():
+                row = self.macros_list.currentRow()
+                if row < 0:
+                    return
+                macro = self.macros_data[row]
+                del self.macros_data[row]
+                if macro in self.macros_audio:
+                    del self.macros_audio[macro]
+                refresh_macros()
+            def set_audio_macro():
+                row = self.macros_list.currentRow()
+                if row < 0:
+                    return
+                macro = self.macros_data[row]
+                files, _ = QFileDialog.getOpenFileNames(tab, "Selecciona archivo de audio", "", "Audio (*.wav)")
+                if files:
+                    self.macros_audio[macro] = files[0]
+                else:
+                    self.macros_audio[macro] = None
+                refresh_macros()
+            def run_macro():
+                row = self.macros_list.currentRow()
+                if row < 0:
+                    return
+                macro = self.macros_data[row]
+                audio_path = self.macros_audio.get(macro)
+                # Ejecutar macro (aquí puedes agregar lógica personalizada)
+                if hasattr(self, 'chat_list'):
+                    self.chat_list.addItem(f"⚡ Macro ejecutada: {macro}")
+                if audio_path:
+                    try:
+                        import threading, sounddevice as sd, numpy as np, wave
+                        def _play():
+                            try:
+                                wf = wave.open(audio_path, 'rb')
+                                samplerate = wf.getframerate()
+                                data = wf.readframes(wf.getnframes())
+                                audio = np.frombuffer(data, dtype=np.int16)
+                                audio = audio.astype(np.float32) / 32768.0
+                                sd.play(audio, samplerate=samplerate)
+                                sd.wait()
+                            except Exception as e:
+                                QMessageBox.warning(tab, "Error audio macro", str(e))
+                        threading.Thread(target=_play, daemon=True).start()
+                    except Exception as e:
+                        QMessageBox.warning(tab, "Error audio macro", str(e))
+            btns = QHBoxLayout()
+            add_btn = QPushButton(QIcon.fromTheme('list-add'), "Añadir")
+            edit_btn = QPushButton(QIcon.fromTheme('document-edit'), "Editar")
+            del_btn = QPushButton(QIcon.fromTheme('edit-delete'), "Eliminar")
+            audio_btn = QPushButton(QIcon.fromTheme('media-playback-start'), "Audio")
+            run_btn = QPushButton(QIcon.fromTheme('system-run'), "Ejecutar")
+            for b in [add_btn, edit_btn, del_btn, audio_btn, run_btn]:
+                b.setStyleSheet("background:#4d2d4d;color:#fff;border-radius:6px;padding:4px 10px;margin:2px;")
+            btns.addWidget(add_btn)
+            btns.addWidget(edit_btn)
+            btns.addWidget(del_btn)
+            btns.addWidget(audio_btn)
+            btns.addWidget(run_btn)
+            vbox = QVBoxLayout()
+            vbox.addWidget(self.macros_list)
+            vbox.addLayout(btns)
+            tab_layout.addLayout(vbox)
+            add_btn.clicked.connect(add_macro)
+            edit_btn.clicked.connect(edit_macro)
+            del_btn.clicked.connect(del_macro)
+            audio_btn.clicked.connect(set_audio_macro)
+            run_btn.clicked.connect(run_macro)
+            refresh_macros()
         elif nombre == "Dados":
             from PyQt5.QtWidgets import QPushButton, QListWidget, QHBoxLayout, QComboBox, QSpinBox
             import random
@@ -907,35 +1114,28 @@ class VTTWindow(QMainWindow):
             btn_del.clicked.connect(del_note)
             btn_save.clicked.connect(save_notes)
             btn_load.clicked.connect(load_notes)
-        elif nombre == "Macros":
-            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
-            self.macros_list = QListWidget()
-            btn_add = QPushButton("Agregar")
-            btn_del = QPushButton("Eliminar")
-            btn_run = QPushButton("Ejecutar")
-            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_run)
-            tab_layout.addWidget(self.macros_list)
-            tab_layout.addLayout(btns)
         elif nombre == "Iniciativa":
             from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout, QPushButton, QListWidget, QLineEdit, QInputDialog, QMessageBox, QLabel, QSpinBox
             import random
             self.init_list = QListWidget()
             self.init_list.setSelectionMode(QListWidget.SingleSelection)
-            tab_layout.addWidget(QLabel("Iniciativa - Orden de Turnos"))
+            self.init_list.setStyleSheet("background:#1e2d1e;color:#fff;font-size:13px;border-radius:6px;")
             tab_layout.addWidget(self.init_list)
             # --- Controles ---
             controls = QHBoxLayout()
-            name_input = QLineEdit(); name_input.setPlaceholderText("Nombre")
-            ini_input = QSpinBox(); ini_input.setRange(1, 99); ini_input.setPrefix("Ini: ")
-            roll_btn = QPushButton("Tirar d20")
-            add_btn = QPushButton("Añadir")
-            del_btn = QPushButton("Eliminar")
-            up_btn = QPushButton("↑")
-            down_btn = QPushButton("↓")
-            next_btn = QPushButton("Siguiente")
-            prev_btn = QPushButton("Anterior")
-            restart_btn = QPushButton("Reiniciar")
-            announce_btn = QPushButton("Anunciar turno")
+            name_input = QLineEdit(); name_input.setPlaceholderText("Nombre"); name_input.setStyleSheet("background:#2a3d2a;color:#fff;border-radius:6px;padding:2px 8px;")
+            ini_input = QSpinBox(); ini_input.setRange(1, 99); ini_input.setPrefix("Ini: "); ini_input.setStyleSheet("background:#2a3d2a;color:#fff;border-radius:6px;padding:2px 8px;")
+            roll_btn = QPushButton(QIcon.fromTheme('media-playback-start'), "Tirar d20")
+            add_btn = QPushButton(QIcon.fromTheme('list-add'), "Añadir")
+            del_btn = QPushButton(QIcon.fromTheme('edit-delete'), "Eliminar")
+            up_btn = QPushButton(QIcon.fromTheme('go-up'), "↑")
+            down_btn = QPushButton(QIcon.fromTheme('go-down'), "↓")
+            next_btn = QPushButton(QIcon.fromTheme('media-skip-forward'), "Siguiente")
+            prev_btn = QPushButton(QIcon.fromTheme('media-skip-backward'), "Anterior")
+            restart_btn = QPushButton(QIcon.fromTheme('view-refresh'), "Reiniciar")
+            announce_btn = QPushButton(QIcon.fromTheme('mail-send'), "Anunciar turno")
+            for b in [roll_btn, add_btn, del_btn, up_btn, down_btn, next_btn, prev_btn, restart_btn, announce_btn]:
+                b.setStyleSheet("background:#2d4d2d;color:#fff;border-radius:6px;padding:4px 10px;margin:2px;")
             controls.addWidget(name_input)
             controls.addWidget(ini_input)
             controls.addWidget(roll_btn)
@@ -1104,13 +1304,22 @@ class VTTWindow(QMainWindow):
             tab_layout.addWidget(self.history_list)
         elif nombre == "Agenda":
             from PyQt5.QtWidgets import QCalendarWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout, QInputDialog, QMessageBox
+            from PyQt5.QtWidgets import QLabel
             from PyQt5.QtCore import QDate, Qt
+            from PyQt5.QtGui import QFont, QIcon
+            titulo = QLabel("Agenda y Calendario")
+            titulo.setFont(QFont('Segoe UI', 14, QFont.Bold))
+            titulo.setStyleSheet("color: #aaccff; margin: 8px;")
+            tab_layout.addWidget(titulo)
             self.calendar = QCalendarWidget()
+            self.calendar.setStyleSheet("background:#222246;color:#fff;border-radius:10px;padding:8px;")
             self.event_list = QListWidget()
+            self.event_list.setStyleSheet("background:#1e1e3d;color:#fff;font-size:13px;border-radius:6px;")
             self.events_by_date = {}  # {QDate.toString(): [str, ...]}
             self.event_audio_by_date = {}  # {date: [audio_path or None, ...]}
-            btn_play_event_audio = QPushButton("Reproducir audio del evento")
+            btn_play_event_audio = QPushButton(QIcon.fromTheme('media-playback-start'), "Reproducir audio del evento")
             btn_play_event_audio.setEnabled(False)
+            btn_play_event_audio.setStyleSheet("background:#2d2d4d;color:#fff;border-radius:6px;padding:4px 10px;margin:4px;")
             def add_event():
                 text, ok = QInputDialog.getText(tab, "Nuevo Evento", "Descripción del evento:")
                 if ok and text.strip():
@@ -1159,9 +1368,11 @@ class VTTWindow(QMainWindow):
                     del self.events_by_date[date]
                 refresh_events()
             btns = QHBoxLayout()
-            add_btn = QPushButton("Añadir")
-            edit_btn = QPushButton("Editar")
-            del_btn = QPushButton("Eliminar")
+            add_btn = QPushButton(QIcon.fromTheme('list-add'), "Añadir")
+            edit_btn = QPushButton(QIcon.fromTheme('document-edit'), "Editar")
+            del_btn = QPushButton(QIcon.fromTheme('edit-delete'), "Eliminar")
+            for b in [add_btn, edit_btn, del_btn]:
+                b.setStyleSheet("background:#2d2d4d;color:#fff;border-radius:6px;padding:4px 10px;margin:2px;")
             btns.addWidget(add_btn)
             btns.addWidget(edit_btn)
             btns.addWidget(del_btn)
@@ -1255,27 +1466,38 @@ class VTTWindow(QMainWindow):
         elif nombre == "Audio":
             from PyQt5.QtWidgets import QPushButton, QLabel, QSlider, QFileDialog, QListWidget, QHBoxLayout, QVBoxLayout
             from PyQt5.QtCore import Qt
+            from PyQt5.QtGui import QFont, QIcon
             import os
+            titulo = QLabel("Audio y Música de Fondo")
+            titulo.setFont(QFont('Segoe UI', 14, QFont.Bold))
+            titulo.setStyleSheet("color: #fffaac; margin: 8px;")
+            tab_layout.addWidget(titulo)
             self.audio_files = []
             self.audio_list = QListWidget()
+            self.audio_list.setStyleSheet("background:#2a2a2a;color:#fff;font-size:13px;border-radius:6px;")
             self.audio_player_label = QLabel("Ningún audio seleccionado")
+            self.audio_player_label.setFont(QFont('Segoe UI', 11, QFont.Bold))
+            self.audio_player_label.setStyleSheet("color:#ffaa44;margin:8px;")
             self.audio_volume = QSlider(Qt.Horizontal)
             self.audio_volume.setRange(0, 100)
             self.audio_volume.setValue(80)
-            btn_load = QPushButton("Cargar audio")
-            btn_play = QPushButton("Reproducir")
-            btn_pause = QPushButton("Pausar")
-            btn_stop = QPushButton("Detener")
+            self.audio_volume.setStyleSheet("background:#444;border-radius:8px;height:14px;")
+            btn_load = QPushButton(QIcon.fromTheme('document-open'), "Cargar audio")
+            btn_play = QPushButton(QIcon.fromTheme('media-playback-start'), "Reproducir")
+            btn_pause = QPushButton(QIcon.fromTheme('media-playback-pause'), "Pausar")
+            btn_stop = QPushButton(QIcon.fromTheme('media-playback-stop'), "Detener")
+            for b in [btn_load, btn_play, btn_pause, btn_stop]:
+                b.setStyleSheet("background:#444;color:#fff;border-radius:6px;padding:4px 10px;margin:2px;")
             hbtns = QHBoxLayout()
             hbtns.addWidget(btn_load)
             hbtns.addWidget(btn_play)
             hbtns.addWidget(btn_pause)
             hbtns.addWidget(btn_stop)
             vbox = QVBoxLayout()
-            vbox.addWidget(QLabel("Lista de audios (mp3/wav)"))
+            vbox.addWidget(QLabel("Lista de audios (mp3/wav)").setFont(QFont('Segoe UI', 11, QFont.Bold)))
             vbox.addWidget(self.audio_list)
             vbox.addLayout(hbtns)
-            vbox.addWidget(QLabel("Volumen"))
+            vbox.addWidget(QLabel("Volumen").setFont(QFont('Segoe UI', 11, QFont.Bold)))
             vbox.addWidget(self.audio_volume)
             vbox.addWidget(self.audio_player_label)
             tab_layout.addLayout(vbox)
@@ -1337,18 +1559,29 @@ class VTTWindow(QMainWindow):
             self.audio_volume.valueChanged.connect(lambda v: None)
         elif nombre == "Voz":
             from PyQt5.QtWidgets import QLineEdit, QPushButton, QLabel, QHBoxLayout, QVBoxLayout, QMessageBox
+            from PyQt5.QtGui import QFont, QIcon
             import webbrowser
+            titulo = QLabel("Chat de Voz Discord")
+            titulo.setFont(QFont('Segoe UI', 14, QFont.Bold))
+            titulo.setStyleSheet("color: #aaccff; margin: 8px;")
+            tab_layout.addWidget(titulo)
             self.discord_url = ""
             label = QLabel("Pega aquí la invitación/canal de Discord (https://discord.gg/... o https://discord.com/channels/...) :")
+            label.setFont(QFont('Segoe UI', 11, QFont.Bold))
             url_input = QLineEdit()
             url_input.setPlaceholderText("URL de Discord")
-            btn_join = QPushButton("Unirse al canal de voz")
+            url_input.setStyleSheet("background:#26334d;color:#fff;border-radius:6px;padding:2px 8px;")
+            btn_join = QPushButton(QIcon.fromTheme('network-connect'), "Unirse al canal de voz")
+            btn_join.setStyleSheet("background:#2d2d4d;color:#fff;border-radius:6px;padding:4px 10px;margin:6px;")
             status = QLabel()
+            status.setFont(QFont('Segoe UI', 11, QFont.Bold))
             def update_status():
                 if url_input.text().strip():
                     status.setText("🟢 Enlace configurado")
+                    status.setStyleSheet("color:#aaffaa;")
                 else:
                     status.setText("🔴 Sin enlace")
+                    status.setStyleSheet("color:#ffaaaa;")
             def join_discord():
                 url = url_input.text().strip()
                 if url.startswith("http"):
