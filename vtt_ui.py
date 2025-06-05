@@ -17,7 +17,8 @@ class VTTWindow(QMainWindow):
         # Tabs vacíos
         self.add_tab("Mapa")
         self.add_tab("Chat")
-        self.add_tab("Dados")
+        
+        
         self.add_tab("Fichas")
         self.add_tab("Iniciativa")
         self.add_tab("Plantillas")
@@ -71,7 +72,7 @@ class VTTWindow(QMainWindow):
             btn_save.clicked.connect(save_chat)
             btn_load.clicked.connect(load_chat)
         elif nombre == "Dados":
-            from PyQt5.QtWidgets import QPushButton, QListWidget, QHBoxLayout, QComboBox, QSpinBox, QLabel
+            from PyQt5.QtWidgets import QPushButton, QListWidget, QHBoxLayout, QComboBox, QSpinBox
             import random
             self.dice_history = QListWidget()
             dice_layout = QHBoxLayout()
@@ -135,30 +136,166 @@ class VTTWindow(QMainWindow):
             btn_save.clicked.connect(save_ficha)
             btn_load.clicked.connect(load_ficha)
         elif nombre == "Iniciativa":
-            from PyQt5.QtWidgets import QListWidget, QPushButton
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QMessageBox
             self.init_list = QListWidget()
-            next_btn = QPushButton("Avanzar turno")
-            next_btn.clicked.connect(lambda: self.init_list.addItem("Turno avanzado"))
+            btn_add = QPushButton("Agregar")
+            btn_del = QPushButton("Eliminar")
+            btn_reset = QPushButton("Resetear")
+            btn_next = QPushButton("Avanzar turno")
+            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_reset); btns.addWidget(btn_next)
             tab_layout.addWidget(self.init_list)
-            tab_layout.addWidget(next_btn)
+            tab_layout.addLayout(btns)
+            def add_initiative():
+                text, ok = QInputDialog.getText(tab, "Agregar a iniciativa", "Nombre e iniciativa (ej: Gandalf 17):")
+                if ok and text.strip():
+                    try:
+                        name, ini = text.rsplit(' ', 1)
+                        ini = int(ini)
+                        self.init_list.addItem(f"{name.strip()} [{ini}]")
+                        sort_initiative()
+                    except Exception:
+                        QMessageBox.warning(tab, "Error", "Formato inválido. Usa: Nombre 17")
+            def del_initiative():
+                row = self.init_list.currentRow()
+                if row >= 0:
+                    self.init_list.takeItem(row)
+            def reset_initiative():
+                self.init_list.clear()
+            def sort_initiative():
+                items = [self.init_list.item(i).text() for i in range(self.init_list.count())]
+                def extract_ini(txt):
+                    try:
+                        return int(txt.split('[')[-1].rstrip(']'))
+                    except: return 0
+                items.sort(key=extract_ini, reverse=True)
+                self.init_list.clear()
+                for it in items:
+                    self.init_list.addItem(it)
+            def next_turn():
+                if self.init_list.count() > 1:
+                    first = self.init_list.takeItem(0)
+                    self.init_list.addItem(first)
+            btn_add.clicked.connect(add_initiative)
+            btn_del.clicked.connect(del_initiative)
+            btn_reset.clicked.connect(reset_initiative)
+            btn_next.clicked.connect(next_turn)
         elif nombre == "Plantillas":
-            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QFileDialog, QMessageBox
+            import json
             self.templates_list = QListWidget()
-            btn_load = QPushButton("Cargar")
+            btn_add = QPushButton("Agregar")
             btn_del = QPushButton("Eliminar")
             btn_use = QPushButton("Usar")
-            btns = QHBoxLayout(); btns.addWidget(btn_load); btns.addWidget(btn_del); btns.addWidget(btn_use)
+            btn_save = QPushButton("Guardar")
+            btn_load = QPushButton("Cargar")
+            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_del); btns.addWidget(btn_use); btns.addWidget(btn_save); btns.addWidget(btn_load)
             tab_layout.addWidget(self.templates_list)
             tab_layout.addLayout(btns)
+            def add_template():
+                dlg = QInputDialog(tab)
+                dlg.setWindowTitle("Agregar plantilla")
+                dlg.setLabelText("Nombre, Clase, Nivel (ej: Legolas,Ranger,7):")
+                if dlg.exec_():
+                    text = dlg.textValue()
+                    parts = [p.strip() for p in text.split(',')]
+                    if len(parts) == 3 and parts[2].isdigit():
+                        nombre, clase, nivel = parts
+                        self.templates_list.addItem(json.dumps({'nombre': nombre, 'clase': clase, 'nivel': int(nivel)}, ensure_ascii=False))
+                    else:
+                        QMessageBox.warning(tab, "Error", "Formato inválido. Usa: Nombre,Clase,Nivel")
+            def del_template():
+                row = self.templates_list.currentRow()
+                if row >= 0:
+                    self.templates_list.takeItem(row)
+            def use_template():
+                item = self.templates_list.currentItem()
+                if item and hasattr(self, 'char_name'):
+                    try:
+                        data = json.loads(item.text())
+                        self.char_name.setText(data.get('nombre', ''))
+                        self.char_class.setText(data.get('clase', ''))
+                        self.char_level.setText(str(data.get('nivel', '')))
+                        QMessageBox.information(tab, "Plantilla usada", "Ficha rellenada con la plantilla seleccionada.")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo usar la plantilla: {e}")
+            def save_templates():
+                path, _ = QFileDialog.getSaveFileName(tab, "Guardar plantillas", "", "Plantillas (*.json)")
+                if path:
+                    try:
+                        data = [json.loads(self.templates_list.item(i).text()) for i in range(self.templates_list.count())]
+                        with open(path, 'w', encoding='utf-8') as f:
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        QMessageBox.information(tab, "Plantillas guardadas", f"Plantillas guardadas en {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo guardar las plantillas: {e}")
+            def load_templates():
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar plantillas", "", "Plantillas (*.json)")
+                if path:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        self.templates_list.clear()
+                        for tpl in data:
+                            self.templates_list.addItem(json.dumps(tpl, ensure_ascii=False))
+                        QMessageBox.information(tab, "Plantillas cargadas", f"Plantillas cargadas de {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo cargar las plantillas: {e}")
+            btn_add.clicked.connect(add_template)
+            btn_del.clicked.connect(del_template)
+            btn_use.clicked.connect(use_template)
+            btn_save.clicked.connect(save_templates)
+            btn_load.clicked.connect(load_templates)
         elif nombre == "Notas":
-            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
+            from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout, QInputDialog, QFileDialog, QMessageBox
             self.notes_list = QListWidget()
             btn_add = QPushButton("Agregar")
             btn_edit = QPushButton("Editar")
             btn_del = QPushButton("Eliminar")
-            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_edit); btns.addWidget(btn_del)
+            btn_save = QPushButton("Guardar notas")
+            btn_load = QPushButton("Cargar notas")
+            btns = QHBoxLayout(); btns.addWidget(btn_add); btns.addWidget(btn_edit); btns.addWidget(btn_del); btns.addWidget(btn_save); btns.addWidget(btn_load)
             tab_layout.addWidget(self.notes_list)
             tab_layout.addLayout(btns)
+            def add_note():
+                text, ok = QInputDialog.getText(tab, "Agregar nota", "Contenido de la nota:")
+                if ok and text.strip():
+                    self.notes_list.addItem(text.strip())
+            def edit_note():
+                item = self.notes_list.currentItem()
+                if item:
+                    text, ok = QInputDialog.getText(tab, "Editar nota", "Contenido de la nota:", text=item.text())
+                    if ok and text.strip():
+                        item.setText(text.strip())
+            def del_note():
+                row = self.notes_list.currentRow()
+                if row >= 0:
+                    self.notes_list.takeItem(row)
+            def save_notes():
+                path, _ = QFileDialog.getSaveFileName(tab, "Guardar notas", "", "Notas (*.txt)")
+                if path:
+                    try:
+                        with open(path, 'w', encoding='utf-8') as f:
+                            for i in range(self.notes_list.count()):
+                                f.write(self.notes_list.item(i).text() + '\n')
+                        QMessageBox.information(tab, "Notas guardadas", f"Notas guardadas en {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo guardar las notas: {e}")
+            def load_notes():
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar notas", "", "Notas (*.txt)")
+                if path:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            self.notes_list.clear()
+                            for line in f:
+                                self.notes_list.addItem(line.rstrip())
+                        QMessageBox.information(tab, "Notas cargadas", f"Notas cargadas de {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo cargar las notas: {e}")
+            btn_add.clicked.connect(add_note)
+            btn_edit.clicked.connect(edit_note)
+            btn_del.clicked.connect(del_note)
+            btn_save.clicked.connect(save_notes)
+            btn_load.clicked.connect(load_notes)
         elif nombre == "Macros":
             from PyQt5.QtWidgets import QListWidget, QPushButton, QHBoxLayout
             self.macros_list = QListWidget()
