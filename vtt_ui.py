@@ -29,8 +29,234 @@ class VTTWindow(QMainWindow):
     def add_tab(self, nombre):
         tab = QWidget()
         tab_layout = QVBoxLayout()
+        # --- Sistema de campaña: botones globales ---
+        if not hasattr(self, '_campaign_buttons_added'):
+            from PyQt5.QtWidgets import QHBoxLayout, QPushButton, QFileDialog, QMessageBox
+            import json, base64, io
+            from PyQt5.QtGui import QImage
+            from PyQt5.QtCore import QByteArray
+            btn_save_campaign = QPushButton("Guardar campaña")
+            btn_load_campaign = QPushButton("Cargar campaña")
+            def save_campaign():
+                import datetime, os
+                data = {}
+                # Mapas y tokens
+                if hasattr(self, 'map_scenes'):
+                    mapdata = []
+                    for scene in self.map_scenes:
+                        # Niebla en base64
+                        fog_bytes = QByteArray()
+                        scene.fog.save(fog_bytes, 'PNG')
+                        fog_b64 = base64.b64encode(fog_bytes.data()).decode('utf-8')
+                        # Imagen de mapa incrustada
+                        map_img_b64 = None
+                        if os.path.exists(scene.image_path):
+                            with open(scene.image_path, 'rb') as fimg:
+                                map_img_b64 = base64.b64encode(fimg.read()).decode('utf-8')
+                        tokens = []
+                        for t in scene.tokens:
+                            # Token img incrustada
+                            token_img_b64 = None
+                            img_path = getattr(t.pixmap, '_img_path', None)
+                            if img_path and os.path.exists(img_path):
+                                with open(img_path, 'rb') as ftok:
+                                    token_img_b64 = base64.b64encode(ftok.read()).decode('utf-8')
+                            tokens.append({
+                                'x': t.pos.x(),
+                                'y': t.pos.y(),
+                                'estados': list(t.states),
+                                'img': img_path or None,
+                                'img_b64': token_img_b64
+                            })
+                        mapdata.append({
+                            'name': scene.name,
+                            'image_path': scene.image_path,
+                            'image_b64': map_img_b64,
+                            'fog': fog_b64,
+                            'tokens': tokens,
+                            'notes': [n if isinstance(n, dict) else {'texto': n, 'privada': False} for n in getattr(scene, 'notes', [])]
+                        })
+                    data['mapas'] = mapdata
+                # Estados personalizados
+                if hasattr(self.map_widget, '_custom_states'):
+                    data['estados_personalizados'] = {k: v.name() for k,v in self.map_widget._custom_states.items()}
+                # Fichas
+                if hasattr(self, 'char_name'):
+                    data['ficha'] = {
+                        'nombre': self.char_name.text(),
+                        'clase': self.char_class.text(),
+                        'nivel': self.char_level.text()
+                    }
+                # Notas
+                if hasattr(self, 'notas_list'):
+                    data['notas'] = [self.notas_list.item(i).text() for i in range(self.notas_list.count())]
+                # Chat
+                if hasattr(self, 'chat_list'):
+                    data['chat'] = [self.chat_list.item(i).text() for i in range(self.chat_list.count())]
+                # Iniciativa
+                if hasattr(self, 'init_list'):
+                    data['iniciativa'] = [self.init_list.item(i).text() for i in range(self.init_list.count())]
+                # Plantillas
+                if hasattr(self, 'template_list'):
+                    data['plantillas'] = [self.template_list.item(i).text() for i in range(self.template_list.count())]
+                path, _ = QFileDialog.getSaveFileName(self, "Guardar campaña", "", "Campaña (*.json)")
+                if path:
+                    # Backup automático
+                    if os.path.exists(path):
+                        now = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                        backup_path = f"{os.path.splitext(path)[0]}_backup_{now}.json"
+                        import shutil
+                        shutil.copy2(path, backup_path)
+                    with open(path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    QMessageBox.information(self, "Campaña guardada", f"Campaña guardada en {path}")
+                # Estados personalizados
+                if hasattr(self.map_widget, '_custom_states'):
+                    data['estados_personalizados'] = {k: v.name() for k,v in self.map_widget._custom_states.items()}
+                # Fichas
+                if hasattr(self, 'char_name'):
+                    data['ficha'] = {
+                        'nombre': self.char_name.text(),
+                        'clase': self.char_class.text(),
+                        'nivel': self.char_level.text()
+                    }
+                # Notas
+                if hasattr(self, 'notas_list'):
+                    data['notas'] = [self.notas_list.item(i).text() for i in range(self.notas_list.count())]
+                # Chat
+                if hasattr(self, 'chat_list'):
+                    data['chat'] = [self.chat_list.item(i).text() for i in range(self.chat_list.count())]
+                # Iniciativa
+                if hasattr(self, 'init_list'):
+                    data['iniciativa'] = [self.init_list.item(i).text() for i in range(self.init_list.count())]
+                # Plantillas
+                if hasattr(self, 'template_list'):
+                    data['plantillas'] = [self.template_list.item(i).text() for i in range(self.template_list.count())]
+                path, _ = QFileDialog.getSaveFileName(self, "Guardar campaña", "", "Campaña (*.json)")
+                if path:
+                    with open(path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    QMessageBox.information(self, "Campaña guardada", f"Campaña guardada en {path}")
+            def load_campaign():
+                path, _ = QFileDialog.getOpenFileName(self, "Cargar campaña", "", "Campaña (*.json)")
+                if not path:
+                    return
+                import os
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # Mapas
+                if 'mapas' in data:
+                    self.map_scenes.clear()
+                    self.map_widget.set_scene(None)
+                    map_selector = None
+                    for w in self.findChildren(QComboBox):
+                        if w.count()>0 and w.itemText(0).endswith(('.png','.jpg','.jpeg','.bmp')):
+                            map_selector = w
+                            break
+                    if map_selector:
+                        map_selector.clear()
+                    for m in data['mapas']:
+                        import tempfile
+                        map_img_path = m['image_path']
+                        use_temp = False
+                        if not os.path.exists(map_img_path) and m.get('image_b64'):
+                            # Crear archivo temporal desde base64
+                            img_bytes = base64.b64decode(m['image_b64'])
+                            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(map_img_path)[-1])
+                            tmp.write(img_bytes)
+                            tmp.close()
+                            map_img_path = tmp.name
+                            use_temp = True
+                        if not os.path.exists(map_img_path):
+                            QMessageBox.warning(self, "Imagen faltante", f"No se encontró la imagen {m['image_path']} para el mapa {m['name']}")
+                            continue
+                        scene = type(self.map_scenes[0] if self.map_scenes else self.map_widget.scene)(m['name'], map_img_path)
+                        # Niebla
+                        fog_bytes = base64.b64decode(m['fog'])
+                        img = QImage()
+                        img.loadFromData(fog_bytes, 'PNG')
+                        scene.fog = QPixmap.fromImage(img)
+                        # Tokens
+                        scene.tokens.clear()
+                        for t in m['tokens']:
+                            token_img_path = t['img']
+                            if token_img_path and os.path.exists(token_img_path):
+                                pix = QPixmap(token_img_path)
+                                pix = pix.scaled(64,64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                pix._img_path = token_img_path
+                            elif t.get('img_b64'):
+                                img_bytes = base64.b64decode(t['img_b64'])
+                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                                tmp.write(img_bytes)
+                                tmp.close()
+                                pix = QPixmap(tmp.name)
+                                pix = pix.scaled(64,64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                pix._img_path = None
+                            else:
+                                pix = QPixmap(64,64)
+                                pix.fill(Qt.red)
+                                pix._img_path = None
+                            token = type(scene.tokens[0] if scene.tokens else Token)(pix, QPoint(t['x'], t['y']))
+                            token.states = set(t.get('estados',[]))
+                            scene.tokens.append(token)
+                        # Notas
+                        scene.notes = m.get('notes',[])
+                        # Compatibilidad retro: si alguna nota es str, convertir a dict
+                        for i, n in enumerate(scene.notes):
+                            if isinstance(n, str):
+                                scene.notes[i] = {'texto': n, 'privada': False}
+                        self.map_scenes.append(scene)
+                        if map_selector:
+                            map_selector.addItem(m['name'])
+                    if self.map_scenes:
+                        self.map_widget.set_scene(self.map_scenes[0])
+                        if map_selector:
+                            map_selector.setCurrentIndex(0)
+                # Estados personalizados
+                if 'estados_personalizados' in data and hasattr(self.map_widget, '_custom_states'):
+                    from PyQt5.QtGui import QColor
+                    self.map_widget._custom_states.clear()
+                    for k,v in data['estados_personalizados'].items():
+                        self.map_widget._custom_states[k] = QColor(v)
+                # Fichas
+                if 'ficha' in data and hasattr(self, 'char_name'):
+                    self.char_name.setText(data['ficha'].get('nombre',''))
+                    self.char_class.setText(data['ficha'].get('clase',''))
+                    self.char_level.setText(data['ficha'].get('nivel',''))
+                # Notas
+                if 'notas' in data and hasattr(self, 'notas_list'):
+                    self.notas_list.clear()
+                    for n in data['notas']:
+                        self.notas_list.addItem(n)
+                # Chat
+                if 'chat' in data and hasattr(self, 'chat_list'):
+                    self.chat_list.clear()
+                    for c in data['chat']:
+                        self.chat_list.addItem(c)
+                # Iniciativa
+                if 'iniciativa' in data and hasattr(self, 'init_list'):
+                    self.init_list.clear()
+                    for i in data['iniciativa']:
+                        self.init_list.addItem(i)
+                # Plantillas
+                if 'plantillas' in data and hasattr(self, 'template_list'):
+                    self.template_list.clear()
+                    for t in data['plantillas']:
+                        self.template_list.addItem(t)
+                QMessageBox.information(self, "Campaña cargada", f"Campaña cargada de {path}")
+            if not hasattr(self, '_campaign_bar'):
+                self._campaign_bar = QHBoxLayout()
+                self._campaign_bar.addWidget(btn_save_campaign)
+                self._campaign_bar.addWidget(btn_load_campaign)
+                if hasattr(self, 'central_widget'):
+                    self.central_widget.layout().insertLayout(0, self._campaign_bar)
+                else:
+                    tab_layout.addLayout(self._campaign_bar)
+            btn_save_campaign.clicked.connect(save_campaign)
+            btn_load_campaign.clicked.connect(load_campaign)
+            self._campaign_buttons_added = True
         if nombre == "Mapa":
-            from PyQt5.QtWidgets import QPushButton, QFileDialog, QHBoxLayout, QMessageBox, QSlider, QLabel, QComboBox
+            from PyQt5.QtWidgets import QPushButton, QFileDialog, QHBoxLayout, QMessageBox, QSlider, QLabel, QComboBox, QListWidget, QLineEdit
             from PyQt5.QtGui import QPixmap, QPainter, QColor
             from PyQt5.QtCore import Qt, QPoint, QRect
             import os
