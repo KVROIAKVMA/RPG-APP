@@ -30,7 +30,302 @@ class VTTWindow(QMainWindow):
         tab = QWidget()
         tab_layout = QVBoxLayout()
         if nombre == "Mapa":
-            tab_layout.addWidget(QLabel("Aquí irá el mapa (imagen, grid, tokens, etc.)", alignment=Qt.AlignCenter))
+            from PyQt5.QtWidgets import QPushButton, QFileDialog, QHBoxLayout, QMessageBox, QSlider, QLabel, QComboBox
+            from PyQt5.QtGui import QPixmap, QPainter, QColor
+            from PyQt5.QtCore import Qt, QPoint, QRect
+            import os
+
+            class Token:
+                def __init__(self, pixmap, pos):
+                    self.pixmap = pixmap
+                    self.pos = pos
+                    self.selected = False
+                    self.states = set()  # Estados activos
+                def rect(self):
+                    return QRect(self.pos, self.pixmap.size())
+
+            class MapScene:
+                def __init__(self, name, image_path):
+                    self.name = name
+                    self.image_path = image_path
+                    self.map_image = QPixmap(image_path)
+                    self.fog = QPixmap(self.map_image.size())
+                    self.fog.fill(QColor(0,0,0,220))
+                    self.tokens = []
+                def clear_fog(self):
+                    self.fog = QPixmap(self.map_image.size())
+                    self.fog.fill(QColor(0,0,0,220))
+                def add_token(self, pixmap):
+                    pix = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    x = (self.map_image.width() - pix.width()) // 2
+                    y = (self.map_image.height() - pix.height()) // 2
+                    self.tokens.append(Token(pix, QPoint(x, y)))
+
+            class MapWidget(QWidget):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                    self.setMinimumSize(600, 400)
+                    self.scene = None
+                    self.drawing = False
+                    self.brush_radius = 40
+                    self.last_pos = None
+                    self.drag_token = None
+                    self.drag_offset = QPoint(0,0)
+                def set_scene(self, scene):
+                    self.scene = scene
+                    self.update()
+                def paintEvent(self, event):
+                    painter = QPainter(self)
+                    if self.scene and self.scene.map_image:
+                        scaled_map = self.scene.map_image.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        painter.drawPixmap(0,0, scaled_map)
+                        # Dibujar tokens
+                        if self.scene.tokens:
+                            sx = scaled_map.width() / self.scene.map_image.width()
+                            sy = scaled_map.height() / self.scene.map_image.height()
+                            for tok in self.scene.tokens:
+                                tx = int(tok.pos.x() * sx)
+                                ty = int(tok.pos.y() * sy)
+                                tw = int(tok.pixmap.width() * sx)
+                                th = int(tok.pixmap.height() * sy)
+                                painter.drawPixmap(tx, ty, tw, th, tok.pixmap)
+                                # Estados visuales
+                                estado_colores = {
+                                    'Envenenado': QColor(0,200,0),
+                                    'Caído': QColor(200,0,0),
+                                    'Inspirado': QColor(0,100,255),
+                                    'Marcado': QColor(220,220,0),
+                                    'Muerto': QColor(20,20,20),
+                                    'Aturdido': QColor(160,32,240),
+                                    'Invisible': QColor(120,120,120),
+                                    'Bendecido': QColor(150,200,255),
+                                    'Maldito': QColor(128,0,128),
+                                    'Protegido': QColor(255,255,255),
+                                    'Acorazado': QColor(255,140,0),
+                                    'Sordo': QColor(139,69,19),
+                                    'Cegado': QColor(60,60,60),
+                                    'Paralizado': QColor(0,0,100)
+                                }
+                                if hasattr(self, '_custom_states'):
+                                    for k, v in self._custom_states.items():
+                                        estado_colores[k] = v
+                                estado_letras = {
+                                    'Envenenado': 'E',
+                                    'Caído': 'C',
+                                    'Inspirado': 'I',
+                                    'Marcado': 'M',
+                                    'Muerto': 'X',
+                                    'Aturdido': 'A',
+                                    'Invisible': 'V',
+                                    'Bendecido': 'B',
+                                    'Maldito': 'D',
+                                    'Protegido': 'P',
+                                    'Acorazado': 'Z',
+                                    'Sordo': 'S',
+                                    'Cegado': 'G',
+                                    'Paralizado': 'L'
+                                }
+                                r = 12  # radio del circulito de estado
+                                offset = 0
+                                for estado in sorted(tok.states):
+                                    color = estado_colores.get(estado, QColor(128,128,128))
+                                    letra = estado_letras.get(estado, estado[0])
+                                    painter.setBrush(color)
+                                    painter.setPen(Qt.black)
+                                    painter.drawEllipse(tx+tw-r-2, ty+2+offset, r, r)
+                                    painter.setPen(Qt.white)
+                                    painter.setFont(painter.font())
+                                    painter.drawText(tx+tw-r-2, ty+2+offset, r, r, Qt.AlignCenter, letra)
+                                    offset += r+2
+                                if tok.selected:
+                                    painter.setPen(QColor(255,255,0))
+                                    painter.drawRect(tx, ty, tw, th)
+                        if self.scene.fog:
+                            scaled_fog = self.scene.fog.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            painter.drawPixmap(0,0, scaled_fog)
+                    else:
+                        painter.fillRect(self.rect(), Qt.darkGray)
+                def mousePressEvent(self, event):
+                    if not self.scene:
+                        return
+                    if event.button() == Qt.LeftButton:
+                        # ¿Token seleccionado?
+                        if self.scene.tokens and self.scene.map_image:
+                            sx = self.width() / self.scene.map_image.width()
+                            sy = self.height() / self.scene.map_image.height()
+                            for tok in reversed(self.scene.tokens):
+                                tx = int(tok.pos.x() * sx)
+                                ty = int(tok.pos.y() * sy)
+                                tw = int(tok.pixmap.width() * sx)
+                                th = int(tok.pixmap.height() * sy)
+                                rect = QRect(tx, ty, tw, th)
+                                if rect.contains(event.pos()):
+                                    self.drag_token = tok
+                                    self.drag_offset = event.pos() - QPoint(tx, ty)
+                                    tok.selected = True
+                                    self.update()
+                                    return
+                        # Si no, modo fog
+                        if self.scene.fog:
+                            self.drawing = True
+                            self.last_pos = event.pos()
+                            self.erase_fog(event.pos())
+                    elif event.button() == Qt.RightButton:
+                        # Menú contextual para eliminar token y estados
+                        if self.scene.tokens and self.scene.map_image:
+                            sx = self.width() / self.scene.map_image.width()
+                            sy = self.height() / self.scene.map_image.height()
+                            for i, tok in enumerate(reversed(self.scene.tokens)):
+                                tx = int(tok.pos.x() * sx)
+                                ty = int(tok.pos.y() * sy)
+                                tw = int(tok.pixmap.width() * sx)
+                                th = int(tok.pixmap.height() * sy)
+                                rect = QRect(tx, ty, tw, th)
+                                if rect.contains(event.pos()):
+                                    from PyQt5.QtWidgets import QMenu
+                                    menu = QMenu(self)
+                                    action_del = menu.addAction("Eliminar token")
+                                    # Submenú de estados
+                                    estados = [
+                                        "Envenenado", "Caído", "Inspirado", "Marcado", "Muerto", "Aturdido", "Invisible", "Bendecido", "Maldito", "Protegido", "Acorazado", "Sordo", "Cegado", "Paralizado"
+                                    ]
+                                    submenu = menu.addMenu("Estados")
+                                    estado_actions = {}
+                                    # Estados personalizados globales para la sesión
+                                    if not hasattr(self, '_custom_states'):
+                                        self._custom_states = {}  # nombre: QColor
+                                    custom_states = self._custom_states
+                                    for est in estados + list(custom_states.keys()):
+                                        act = submenu.addAction(est)
+                                        act.setCheckable(True)
+                                        act.setChecked(est in tok.states)
+                                        estado_actions[act] = est
+                                    submenu.addSeparator()
+                                    action_add_custom = submenu.addAction("Agregar estado personalizado...")
+                                    action_res = menu.exec_(self.mapToGlobal(event.pos()))
+                                    if action_res == action_del:
+                                        idx = len(self.scene.tokens) - 1 - i
+                                        self.scene.tokens.pop(idx)
+                                        self.update()
+                                        return
+                                    elif action_res in estado_actions:
+                                        est = estado_actions[action_res]
+                                        if est in tok.states:
+                                            tok.states.remove(est)
+                                        else:
+                                            tok.states.add(est)
+                                        self.update()
+                                        return
+                                    elif action_res == action_add_custom:
+                                        from PyQt5.QtWidgets import QInputDialog, QColorDialog
+                                        text, ok = QInputDialog.getText(self, "Estado personalizado", "Nombre del estado:")
+                                        if ok and text:
+                                            color = QColorDialog.getColor(QColor(128,128,128), self, f"Color para {text}")
+                                            if color.isValid():
+                                                custom_states[text] = color
+                                                tok.states.add(text)
+                                                self.update()
+                                        return
+                        for tok in self.scene.tokens:
+                            tok.selected = False
+                        self.update()
+                def mouseMoveEvent(self, event):
+                    if not self.scene:
+                        return
+                    if self.drag_token and self.scene.map_image:
+                        sx = self.width() / self.scene.map_image.width()
+                        sy = self.height() / self.scene.map_image.height()
+                        x = int((event.pos().x() - self.drag_offset.x()) / sx)
+                        y = int((event.pos().y() - self.drag_offset.y()) / sy)
+                        self.drag_token.pos = QPoint(x, y)
+                        self.update()
+                    elif self.drawing and self.scene.fog:
+                        self.erase_fog(event.pos())
+                def mouseReleaseEvent(self, event):
+                    self.drawing = False
+                    self.drag_token = None
+                def erase_fog(self, pos):
+                    if not self.scene or not self.scene.fog:
+                        return
+                    w, h = self.width(), self.height()
+                    fw, fh = self.scene.fog.width(), self.scene.fog.height()
+                    x = int(pos.x() * fw / w)
+                    y = int(pos.y() * fh / h)
+                    painter = QPainter(self.scene.fog)
+                    painter.setCompositionMode(QPainter.CompositionMode_Clear)
+                    painter.setBrush(Qt.transparent)
+                    painter.setPen(Qt.NoPen)
+                    painter.drawEllipse(QPoint(x, y), self.brush_radius, self.brush_radius)
+                    painter.end()
+                    self.update()
+            self.map_scenes = []
+            self.map_widget = MapWidget()
+            map_selector = QComboBox()
+            btn_add_map = QPushButton("Agregar mapa")
+            btn_del_map = QPushButton("Eliminar mapa")
+            btn_fog = QPushButton("Cubrir todo (niebla)")
+            btn_token = QPushButton("Cargar token")
+            brush_label = QLabel("Tamaño pincel: 40")
+            brush_slider = QSlider(Qt.Horizontal)
+            brush_slider.setMinimum(10)
+            brush_slider.setMaximum(100)
+            brush_slider.setValue(40)
+            def on_brush(val):
+                self.map_widget.brush_radius = val
+                brush_label.setText(f"Tamaño pincel: {val}")
+            brush_slider.valueChanged.connect(on_brush)
+            def add_map():
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar mapa", "", "Imágenes (*.png *.jpg *.jpeg *.bmp)")
+                if path:
+                    name = os.path.basename(path)
+                    scene = MapScene(name, path)
+                    self.map_scenes.append(scene)
+                    map_selector.addItem(name)
+                    map_selector.setCurrentIndex(len(self.map_scenes)-1)
+                    self.map_widget.set_scene(scene)
+            def del_map():
+                idx = map_selector.currentIndex()
+                if idx >= 0 and len(self.map_scenes) > 0:
+                    self.map_scenes.pop(idx)
+                    map_selector.removeItem(idx)
+                    if self.map_scenes:
+                        new_idx = max(0, idx-1)
+                        map_selector.setCurrentIndex(new_idx)
+                        self.map_widget.set_scene(self.map_scenes[new_idx])
+                    else:
+                        self.map_widget.set_scene(None)
+            def select_map(idx):
+                if 0 <= idx < len(self.map_scenes):
+                    self.map_widget.set_scene(self.map_scenes[idx])
+            def cover_all():
+                scene = self.map_widget.scene
+                if scene:
+                    scene.clear_fog()
+                    self.map_widget.update()
+            def load_token():
+                scene = self.map_widget.scene
+                if not scene:
+                    return
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar token", "", "Imágenes (*.png *.jpg *.jpeg *.bmp)")
+                if path:
+                    pix = QPixmap(path)
+                    scene.add_token(pix)
+                    self.map_widget.update()
+            map_selector.currentIndexChanged.connect(select_map)
+            btn_add_map.clicked.connect(add_map)
+            btn_del_map.clicked.connect(del_map)
+            btn_fog.clicked.connect(cover_all)
+            btn_token.clicked.connect(load_token)
+            controls = QHBoxLayout()
+            controls.addWidget(map_selector)
+            controls.addWidget(btn_add_map)
+            controls.addWidget(btn_del_map)
+            controls.addWidget(btn_fog)
+            controls.addWidget(btn_token)
+            controls.addWidget(brush_label)
+            controls.addWidget(brush_slider)
+            tab_layout.addLayout(controls)
+            tab_layout.addWidget(self.map_widget)
         elif nombre == "Chat":
             from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, QMessageBox
             self.chat_list = QListWidget()
