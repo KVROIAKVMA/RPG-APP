@@ -31,7 +31,7 @@ class VTTWindow(QMainWindow):
         if nombre == "Mapa":
             tab_layout.addWidget(QLabel("Aquí irá el mapa (imagen, grid, tokens, etc.)", alignment=Qt.AlignCenter))
         elif nombre == "Chat":
-            from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout
+            from PyQt5.QtWidgets import QListWidget, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, QMessageBox
             self.chat_list = QListWidget()
             chat_input_layout = QHBoxLayout()
             self.chat_input = QLineEdit()
@@ -40,16 +40,61 @@ class VTTWindow(QMainWindow):
             chat_input_layout.addWidget(self.chat_send)
             tab_layout.addWidget(self.chat_list)
             tab_layout.addLayout(chat_input_layout)
+            btns = QHBoxLayout()
+            btn_save = QPushButton("Guardar chat")
+            btn_load = QPushButton("Cargar chat")
+            btns.addWidget(btn_save)
+            btns.addWidget(btn_load)
+            tab_layout.addLayout(btns)
             self.chat_send.clicked.connect(lambda: self.chat_list.addItem(self.chat_input.text()) or self.chat_input.clear())
+            def save_chat():
+                path, _ = QFileDialog.getSaveFileName(tab, "Guardar chat", "", "Chat (*.txt)")
+                if path:
+                    try:
+                        with open(path, 'w', encoding='utf-8') as f:
+                            for i in range(self.chat_list.count()):
+                                f.write(self.chat_list.item(i).text() + '\n')
+                        QMessageBox.information(tab, "Chat guardado", f"Chat guardado en {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo guardar el chat: {e}")
+            def load_chat():
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar chat", "", "Chat (*.txt)")
+                if path:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            self.chat_list.clear()
+                            for line in f:
+                                self.chat_list.addItem(line.rstrip())
+                        QMessageBox.information(tab, "Chat cargado", f"Chat cargado de {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo cargar el chat: {e}")
+            btn_save.clicked.connect(save_chat)
+            btn_load.clicked.connect(load_chat)
         elif nombre == "Dados":
-            from PyQt5.QtWidgets import QPushButton, QListWidget
+            from PyQt5.QtWidgets import QPushButton, QListWidget, QHBoxLayout, QComboBox, QSpinBox, QLabel
+            import random
             self.dice_history = QListWidget()
-            dice_btn = QPushButton("Tirar D20")
-            dice_btn.clicked.connect(lambda: self.dice_history.addItem("Resultado: " + str(__import__('random').randint(1,20))))
-            tab_layout.addWidget(dice_btn)
+            dice_layout = QHBoxLayout()
+            dice_type = QComboBox(); dice_type.addItems(["d4", "d6", "d8", "d10", "d12", "d20", "d100"])
+            dice_qty = QSpinBox(); dice_qty.setRange(1, 20); dice_qty.setValue(1)
+            dice_btn = QPushButton("Lanzar")
+            dice_layout.addWidget(QLabel("Tipo:"))
+            dice_layout.addWidget(dice_type)
+            dice_layout.addWidget(QLabel("Cantidad:"))
+            dice_layout.addWidget(dice_qty)
+            dice_layout.addWidget(dice_btn)
+            tab_layout.addLayout(dice_layout)
             tab_layout.addWidget(self.dice_history)
+            def lanzar_dados():
+                tipo = int(dice_type.currentText()[1:])
+                qty = dice_qty.value()
+                resultados = [random.randint(1, tipo) for _ in range(qty)]
+                total = sum(resultados)
+                self.dice_history.addItem(f"Tirada {qty}x d{tipo}: {resultados} (Total: {total})")
+            dice_btn.clicked.connect(lanzar_dados)
         elif nombre == "Fichas":
-            from PyQt5.QtWidgets import QFormLayout, QLineEdit, QPushButton
+            from PyQt5.QtWidgets import QFormLayout, QLineEdit, QPushButton, QHBoxLayout, QFileDialog, QMessageBox
+            import json
             form = QFormLayout()
             self.char_name = QLineEdit()
             self.char_class = QLineEdit()
@@ -58,6 +103,37 @@ class VTTWindow(QMainWindow):
             form.addRow("Clase", self.char_class)
             form.addRow("Nivel", self.char_level)
             tab_layout.addLayout(form)
+            btns = QHBoxLayout()
+            btn_save = QPushButton("Guardar ficha")
+            btn_load = QPushButton("Cargar ficha")
+            btns.addWidget(btn_save)
+            btns.addWidget(btn_load)
+            tab_layout.addLayout(btns)
+            def save_ficha():
+                data = {
+                    'nombre': self.char_name.text(),
+                    'clase': self.char_class.text(),
+                    'nivel': self.char_level.text()
+                }
+                path, _ = QFileDialog.getSaveFileName(tab, "Guardar ficha", "", "Ficha (*.json)")
+                if path:
+                    with open(path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    QMessageBox.information(tab, "Ficha guardada", f"Ficha guardada en {path}")
+            def load_ficha():
+                path, _ = QFileDialog.getOpenFileName(tab, "Cargar ficha", "", "Ficha (*.json)")
+                if path:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        self.char_name.setText(data.get('nombre', ''))
+                        self.char_class.setText(data.get('clase', ''))
+                        self.char_level.setText(str(data.get('nivel', '')))
+                        QMessageBox.information(tab, "Ficha cargada", f"Ficha cargada de {path}")
+                    except Exception as e:
+                        QMessageBox.critical(tab, "Error", f"No se pudo cargar la ficha: {e}")
+            btn_save.clicked.connect(save_ficha)
+            btn_load.clicked.connect(load_ficha)
         elif nombre == "Iniciativa":
             from PyQt5.QtWidgets import QListWidget, QPushButton
             self.init_list = QListWidget()
